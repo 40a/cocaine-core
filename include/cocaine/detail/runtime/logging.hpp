@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -21,26 +21,24 @@
 #ifndef COCAINE_BOOTSTRAP_LOGGING_HPP
 #define COCAINE_BOOTSTRAP_LOGGING_HPP
 
-#include "cocaine/common.hpp"
-
-#include "cocaine/context/config.hpp"
+#include <blackhole/factory.hpp>
 
 namespace cocaine { namespace logging {
 
-class init_t {
-    std::map<std::string, config_t::logging_t::logger_t> config_;
+class console_t;
 
-public:
-    explicit
-    init_t(const std::map<std::string, config_t::logging_t::logger_t>& config);
+}}
 
-    std::unique_ptr<logger_t>
-    logger(const std::string& backend) const;
+namespace blackhole {
+inline namespace v1 {
 
-    config_t::logging_t::logger_t
-    config(const std::string& backend) const;
+template<>
+struct factory<cocaine::logging::console_t> : public factory<sink_t> {
+    auto type() const noexcept -> const char*;
+    auto from(const config::node_t& config) const -> std::unique_ptr<sink_t>;
 };
 
-}} // namespace cocaine::logging
+}  // namespace v1
+}  // namespace blackhole
 
 #endif

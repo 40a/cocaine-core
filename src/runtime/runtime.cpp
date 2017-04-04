@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -18,8 +18,29 @@
     along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <iostream>
+
+#include <boost/filesystem.hpp>
+#include <boost/program_options.hpp>
+
+#include <blackhole/attribute.hpp>
+#include <blackhole/attributes.hpp>
+#include <blackhole/config/json.hpp>
+#include <blackhole/extensions/facade.hpp>
+#include <blackhole/extensions/writer.hpp>
+#include <blackhole/logger.hpp>
+#include <blackhole/registry.hpp>
+#include <blackhole/root.hpp>
+#include <blackhole/wrapper.hpp>
+
 #include "cocaine/common.hpp"
 #include "cocaine/context.hpp"
+#include "cocaine/context/config.hpp"
+#include "cocaine/context/signal.hpp"
+#include "cocaine/dynamic.hpp"
+#include "cocaine/errors.hpp"
+#include "cocaine/logging.hpp"
+#include "cocaine/signal.hpp"
 
 #include "cocaine/detail/runtime/logging.hpp"
 
@@ -27,139 +48,16 @@
     #include "cocaine/detail/runtime/pid_file.hpp"
 #endif
 
-#include <csignal>
-#include <iostream>
-
-#include <asio/io_service.hpp>
-#include <asio/signal_set.hpp>
-
-#include <boost/filesystem.hpp>
-#include <boost/program_options.hpp>
-
-#include <blackhole/blackhole.hpp>
+#include "signal.hpp"
 
 #if defined(__linux__)
     #define BACKWARD_HAS_BFD 1
 #endif
-
-#include "backward.hpp"
+#include <backward.hpp>
 
 using namespace cocaine;
 
-namespace fs = boost::filesystem;
-namespace ph = std::placeholders;
 namespace po = boost::program_options;
-
-namespace {
-
-void
-stacktrace(int signum, siginfo_t* COCAINE_UNUSED_(info), void* context) {
-    ucontext_t* uctx = static_cast<ucontext_t*>(context);
-
-    backward::StackTrace trace;
-    backward::Printer printer;
-
-#if defined(REG_RIP)
-    void* error_address = reinterpret_cast<void*>(uctx->uc_mcontext.gregs[REG_RIP]);
-#elif defined(REG_EIP)
-    void* error_address = reinterpret_cast<void*>(uctx->uc_mcontext.gregs[REG_EIP]);
-#else
-    void* error_address = uctx = nullptr;
-#endif
-
-    if(error_address) {
-        trace.load_from(error_address, 32);
-    } else {
-        trace.load_here(32);
-    }
-
-    printer.address = true;
-    printer.print(trace);
-
-    // Re-raise so that a core dump is generated.
-    std::raise(signum);
-
-    // Just in case, if the default handler returns for some weird reason.
-    std::_Exit(EXIT_FAILURE);
-}
-
-struct runtime_t {
-    runtime_t() {
-        // Establish an alternative signal stack
-        const size_t alt_stack_size = 8 * 1024 * 1024;
-
-        m_alt_stack.ss_sp = new char[alt_stack_size];
-        m_alt_stack.ss_size = alt_stack_size;
-        m_alt_stack.ss_flags = 0;
-
-        if(::sigaltstack(&m_alt_stack, nullptr) != 0) {
-            std::cerr << "ERROR: Unable to activate an alternative signal stack" << std::endl;
-        }
-
-        // Reroute the core-generating signals.
-
-        struct sigaction action;
-
-        std::memset(&action, 0, sizeof(action));
-
-        action.sa_sigaction = &stacktrace;
-        action.sa_flags = SA_NODEFER | SA_ONSTACK | SA_RESETHAND | SA_SIGINFO;
-
-        ::sigaction(SIGABRT, &action, nullptr);
-        ::sigaction(SIGBUS,  &action, nullptr);
-        ::sigaction(SIGSEGV, &action, nullptr);
-
-        // Block the deprecated signals.
-
-        sigset_t sigset;
-
-        sigemptyset(&sigset);
-        sigaddset(&sigset, SIGPIPE);
-
-        ::sigprocmask(SIG_BLOCK, &sigset, nullptr);
-    }
-
-   ~runtime_t() {
-        m_alt_stack.ss_flags = SS_DISABLE;
-
-        if(::sigaltstack(&m_alt_stack, nullptr) != 0) {
-            std::cerr << "ERROR: Unable to deactivate an alternative signal stack" << std::endl;
-        }
-
-        delete[] static_cast<char*>(m_alt_stack.ss_sp);
-    }
-
-    int
-    run() {
-        sigset_t sigset;
-
-        sigemptyset(&sigset);
-        sigaddset(&sigset, SIGINT);
-        sigaddset(&sigset, SIGTERM);
-        sigaddset(&sigset, SIGQUIT);
-
-        int signum = -1;
-
-        ::sigwait(&sigset, &signum);
-
-        static const std::map<int, std::string> descriptions = {
-            { SIGINT,  "SIGINT"  },
-            { SIGQUIT, "SIGQUIT" },
-            { SIGTERM, "SIGTERM" }
-        };
-
-        std::cout << "[Runtime] Caught " << descriptions.at(signum) << ", exiting." << std::endl;
-
-        // There's no way it can actually go wrong.
-        return EXIT_SUCCESS;
-    }
-
-private:
-    // An alternative signal stack for SIGSEGV handling.
-    stack_t m_alt_stack;
-};
-
-} // namespace
 
 int
 main(int argc, char* argv[]) {
@@ -180,18 +78,18 @@ main(int argc, char* argv[]) {
         po::store(po::command_line_parser(argc, argv).options(general_options).run(), vm);
         po::notify(vm);
     } catch(const po::error& e) {
-        std::cerr << cocaine::format("ERROR: %s.", e.what()) << std::endl;
+        std::cerr << cocaine::format("ERROR: {}.", e.what()) << std::endl;
         return EXIT_FAILURE;
     }
 
     if(vm.count("help")) {
-        std::cout << cocaine::format("USAGE: %s [options]", argv[0]) << std::endl;
+        std::cout << cocaine::format("USAGE: {} [options]", argv[0]) << std::endl;
         std::cout << general_options;
         return EXIT_SUCCESS;
     }
 
     if(vm.count("version")) {
-        std::cout << cocaine::format("Cocaine %d.%d.%d", COCAINE_VERSION_MAJOR, COCAINE_VERSION_MINOR,
+        std::cout << cocaine::format("Cocaine {}.{}.{}", COCAINE_VERSION_MAJOR, COCAINE_VERSION_MINOR,
             COCAINE_VERSION_RELEASE) << std::endl;
         return EXIT_SUCCESS;
     }
@@ -210,9 +108,9 @@ main(int argc, char* argv[]) {
     std::cout << "[Runtime] Parsing the configuration." << std::endl;
 
     try {
-        config.reset(new config_t(vm["configuration"].as<std::string>()));
+        config = make_config(vm["configuration"].as<std::string>());
     } catch(const std::system_error& e) {
-        std::cerr << cocaine::format("ERROR: unable to initialize the configuration - %s.", e.what()) << std::endl;
+        std::cerr << cocaine::format("ERROR: unable to initialize the configuration - {}.", error::to_string(e)) << std::endl;
         return EXIT_FAILURE;
     }
 
@@ -225,18 +123,18 @@ main(int argc, char* argv[]) {
             return EXIT_FAILURE;
         }
 
-        fs::path pid_path;
+        boost::filesystem::path pid_path;
 
         if(!vm["pidfile"].empty()) {
             pid_path = vm["pidfile"].as<std::string>();
         } else {
-            pid_path = cocaine::format("%s/cocained.pid", config->path.runtime);
+            pid_path = cocaine::format("{}/cocained.pid", config->path().runtime());
         }
 
         try {
             pidfile.reset(new pid_file_t(pid_path));
         } catch(const std::system_error& e) {
-            std::cerr << cocaine::format("ERROR: unable to create the pidfile - %s.", e.what()) << std::endl;
+            std::cerr << cocaine::format("ERROR: unable to create the pidfile - {}.", error::to_string(e)) << std::endl;
             return EXIT_FAILURE;
         }
     }
@@ -246,38 +144,63 @@ main(int argc, char* argv[]) {
 
     const auto backend = vm["logging"].as<std::string>();
 
-    std::cout << cocaine::format("[Runtime] Initializing the logging system, backend: %s.", backend)
+    std::cout << cocaine::format("[Runtime] Initializing the logging system, backend: {}.", backend)
               << std::endl;
 
+    std::unique_ptr<blackhole::root_logger_t> root;
     std::unique_ptr<logging::logger_t> logger;
-    std::unique_ptr<logging::log_t>    wrapper;
+
+    auto registry = blackhole::registry::configured();
+    registry->add<logging::console_t>();
 
     try {
-        blackhole::attribute::set_t attributes;
+        std::stringstream stream;
+        stream << boost::lexical_cast<std::string>(config->logging().loggers());
 
-        cocaine::logging::init_t logging(config->logging.loggers);
-        logger = logging.logger(backend);
+        auto log = registry->builder<blackhole::config::json_t>(stream)
+            .build(backend);
 
-        if(logging.config(backend).attributes.count("source_host")) {
-            attributes.emplace_back("source_host", config->network.hostname);
-        }
-
-        wrapper.reset(new logging::log_t(*logger, attributes));
-    } catch(const std::out_of_range& e) {
-        std::cerr << "ERROR: unable to initialize the logging - backend does not exist." << std::endl;
+        root.reset(new blackhole::root_logger_t(std::move(log)));
+        logger.reset(new blackhole::wrapper_t(*root, {}));
+    } catch(const std::exception& e) {
+        std::cerr << "ERROR: unable to initialize the logging: " << e.what() << std::endl;
         return EXIT_FAILURE;
     }
 
-    COCAINE_LOG_INFO(wrapper, "initializing the server");
+    COCAINE_LOG_INFO(logger, "initializing the server");
 
+    auto slog = std::make_shared<blackhole::wrapper_t>(*root, blackhole::attributes_t{
+        {"source", "runtime/signals"}
+    });
+
+    // Signal handling.
+
+    signal::handler_t handler(slog, {SIGPIPE, SIGINT, SIGQUIT, SIGTERM, SIGCHLD, SIGHUP});
+
+    // Run context.
     std::unique_ptr<context_t> context;
-
     try {
-        context.reset(new context_t(*config, std::move(wrapper)));
+        context = make_context(std::move(config), std::move(logger));
     } catch(const std::system_error& e) {
-        COCAINE_LOG_ERROR(logger, "unable to initialize the context - %s.", e.what());
+        COCAINE_LOG_ERROR(root, "unable to initialize the context - {}.", error::to_string(e));
         return EXIT_FAILURE;
     }
 
-    return runtime_t().run();
+    signal::engine_t engine(handler, slog);
+    engine.on(SIGHUP, propagate_t{context->signal_hub(), handler, [&] {
+        COCAINE_LOG_DEBUG(slog, "resetting logger");
+        std::stringstream stream;
+        stream << boost::lexical_cast<std::string>(context->config().logging().loggers());
+
+        // Create a new logger before swap to be sure that no events are missed.
+        *root = registry->builder<blackhole::config::json_t>(stream)
+            .build(backend);
+        COCAINE_LOG_INFO(slog, "core logger has been successfully reset");
+    }});
+    engine.on(SIGCHLD, propagate_t{context->signal_hub(), handler, {}});
+    engine.ignore(SIGPIPE);
+    engine.start();
+    engine.wait_for({SIGINT, SIGTERM, SIGQUIT});
+
+    return EXIT_SUCCESS;
 }

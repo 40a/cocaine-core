@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -21,33 +21,31 @@
 #ifndef COCAINE_FORMAT_HPP
 #define COCAINE_FORMAT_HPP
 
-#include <boost/format.hpp>
+#include <blackhole/extensions/format.hpp>
 
-namespace cocaine { namespace aux {
+namespace cocaine {
 
-static inline
-std::string
-substitute(boost::format&& formatter) {
-    return formatter.str();
-}
-
-template<class T, class... Args>
-static inline
-std::string
-substitute(boost::format&& formatter, const T& argument, const Args&... args) {
-    return substitute(std::move(formatter % argument), args...);
-}
-
-} // namespace aux
+/// Specialize this trait if you want custom behavior while formatting arguments.
+template<typename T>
+struct display_traits {
+    static
+    auto
+    apply(const T& value) -> const T& {
+        return value;
+    }
+};
 
 template<class... Args>
-static inline
+inline
 std::string
 format(const std::string& format, const Args&... args) {
     try {
-        return aux::substitute(std::move(boost::format(format)), args...);
-    } catch(const boost::io::format_error& e) {
-        return aux::substitute(std::move(boost::format("<format error - %s>")), e.what());
+        return blackhole::fmt::format(
+            format,
+            display_traits<Args>::apply(args)...
+        );
+    } catch(const blackhole::fmt::FormatError& e) {
+        return std::string("<unable to format message - ") + e.what() + ">";
     }
 }
 

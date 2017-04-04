@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -24,11 +24,9 @@
 #include "cocaine/common.hpp"
 
 #include "cocaine/locked_ptr.hpp"
-#include "cocaine/repository.hpp"
-
 #include "cocaine/traits.hpp"
+#include "cocaine/utility/future.hpp"
 
-#include <mutex>
 #include <sstream>
 
 namespace cocaine { namespace api {
@@ -36,116 +34,169 @@ namespace cocaine { namespace api {
 struct storage_t {
     typedef storage_t category_type;
 
+    template<class T>
+    using callback = std::function<void(std::future<T>)>;
+
     virtual
    ~storage_t() {
         // Empty.
     }
 
     virtual
-    std::string
-    read(const std::string& collection, const std::string& key) = 0;
+    void
+    read(const std::string& collection, const std::string& key, callback<std::string> cb) = 0;
+
+    virtual
+    std::future<std::string>
+    read(const std::string& collection, const std::string& key);
 
     virtual
     void
-    write(const std::string& collection, const std::string& key, const std::string& blob,
-          const std::vector<std::string>& tags) = 0;
+    write(const std::string& collection,
+          const std::string& key,
+          const std::string& blob,
+          const std::vector<std::string>& tags,
+          callback<void> cb) = 0;
+
+    virtual
+    std::future<void>
+    write(const std::string& collection,
+          const std::string& key,
+          const std::string& blob,
+          const std::vector<std::string>& tags);
 
     virtual
     void
-    remove(const std::string& collection, const std::string& key) = 0;
+    remove(const std::string& collection, const std::string& key, callback<void> cb) = 0;
 
     virtual
-    std::vector<std::string>
-    find(const std::string& collection, const std::vector<std::string>& tags) = 0;
+    std::future<void>
+    remove(const std::string& collection, const std::string& key);
+
+    virtual
+    void
+    find(const std::string& collection, const std::vector<std::string>& tags, callback<std::vector<std::string>> cb) = 0;
+
+    virtual
+    std::future<std::vector<std::string>>
+    find(const std::string& collection, const std::vector<std::string>& tags);
 
     // Helper methods
 
     template<class T>
-    T
+    void
+    get(const std::string& collection, const std::string& key, callback<T> cb);
+
+    template<class T>
+    std::future<T>
     get(const std::string& collection, const std::string& key);
 
     template<class T>
     void
-    put(const std::string& collection, const std::string& key, const T& object,
+    put(const std::string& collection,
+        const std::string& key,
+        const T& object,
+        const std::vector<std::string>& tags,
+        callback<void> cb);
+
+    template<class T>
+    std::future<void>
+    put(const std::string& collection,
+        const std::string& key,
+        const T& object,
         const std::vector<std::string>& tags);
+
 
 protected:
     storage_t(context_t&, const std::string& /* name */, const dynamic_t& /* args */) {
         // Empty.
     }
+
+private:
+    template <class T>
+    static
+    void assign_future_result(std::promise<T>& promise, std::future<T> future) {
+        try {
+            promise.set_value(future.get());
+        } catch (...) {
+            promise.set_exception(std::current_exception());
+        }
+    }
+
+    static
+    void assign_future_result(std::promise<void>& promise, std::future<void> future) {
+        try {
+            future.get();
+            promise.set_value();
+        } catch (...) {
+            promise.set_exception(std::current_exception());
+        }
+    }
 };
 
 template<class T>
-T
+void
+storage_t::get(const std::string& collection, const std::string& key, callback<T> cb) {
+
+    // TODO: move inside lambda as we move on c++14
+    auto inner_cb = [=](std::future<std::string> f) {
+        T result;
+        msgpack::unpacked unpacked;
+        std::string blob;
+
+        try {
+            blob = f.get();
+            msgpack::unpack(&unpacked, blob.data(), blob.size());
+            io::type_traits<T>::unpack(unpacked.get(), result);
+        } catch(...) {
+            return cb(make_exceptional_future<T>());
+        }
+
+        return cb(make_ready_future(result));
+    };
+    read(collection, key, std::move(inner_cb));
+}
+
+template<class T>
+std::future<T>
 storage_t::get(const std::string& collection, const std::string& key) {
-    T result;
-    msgpack::unpacked unpacked;
-
-    std::string blob(read(collection, key));
-
-    try {
-        msgpack::unpack(&unpacked, blob.data(), blob.size());
-    } catch(const msgpack::unpack_error& e) {
-        throw std::system_error(std::make_error_code(std::errc::invalid_argument));
-    }
-
-    try {
-        io::type_traits<T>::unpack(unpacked.get(), result);
-    } catch(const msgpack::type_error& e) {
-        throw std::system_error(std::make_error_code(std::errc::invalid_argument));
-    }
-
-    return result;
+    auto promise = std::make_shared<std::promise<T>>();
+    get<T>(collection, key, [=](std::future<T> future){
+        assign_future_result<T>(*promise, std::move(future));
+    });
+    return promise->get_future();
 }
 
 template<class T>
 void
-storage_t::put(const std::string& collection, const std::string& key, const T& object,
-               const std::vector<std::string>& tags)
+storage_t::put(const std::string& collection,
+               const std::string& key,
+               const T& object,
+               const std::vector<std::string>& tags,
+               callback<void> cb)
 {
     std::ostringstream buffer;
     msgpack::packer<std::ostringstream> packer(buffer);
 
     io::type_traits<T>::pack(packer, object);
 
-    write(collection, key, buffer.str(), tags);
+    write(collection, key, buffer.str(), tags, std::move(cb));
 }
 
-template<>
-struct category_traits<storage_t> {
-    typedef std::shared_ptr<storage_t> ptr_type;
+template<class T>
+std::future<void>
+storage_t::put(const std::string& collection, const std::string& key, const T& object, const std::vector<std::string>& tags) {
+    auto promise = std::make_shared<std::promise<void>>();
+    put(collection, key, object, tags, [=](std::future<void> future) mutable {
+        assign_future_result(*promise, std::move(future));
+    });
+    return promise->get_future();
+}
 
-    struct factory_type: public basic_factory<storage_t> {
-        virtual
-        ptr_type
-        get(context_t& context, const std::string& name, const dynamic_t& args) = 0;
-    };
 
-    template<class T>
-    struct default_factory: public factory_type {
-        virtual
-        ptr_type
-        get(context_t& context, const std::string& name, const dynamic_t& args) {
-            ptr_type instance;
+typedef std::shared_ptr<storage_t> storage_ptr;
 
-            instances.apply([&](std::map<std::string, std::weak_ptr<storage_t>>& instances) {
-                if((instance = instances[name].lock()) != nullptr) {
-                    return;
-                }
-
-                instance = std::make_shared<T>(context, name, args);
-                instances[name] = instance;
-            });
-
-            return instance;
-        }
-
-    private:
-        synchronized<std::map<std::string, std::weak_ptr<storage_t>>> instances;
-    };
-};
-
-category_traits<storage_t>::ptr_type
+storage_ptr
 storage(context_t& context, const std::string& name);
 
 }} // namespace cocaine::api

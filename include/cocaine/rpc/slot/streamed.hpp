@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -22,6 +22,7 @@
 #define COCAINE_IO_STREAMED_SLOT_HPP
 
 #include "cocaine/rpc/slot/deferred.hpp"
+#include "cocaine/utility/exchange.hpp"
 
 namespace cocaine {
 
@@ -32,50 +33,89 @@ struct streamed {
     typedef io::message_queue<io::streaming_tag<type>> queue_type;
     typedef io::streaming<type> protocol;
 
-    template<template<class> class, class, class> friend struct io::deferred_slot;
+    typedef typename protocol::chunk chunk_type;
+    typedef typename protocol::error error_type;
+    typedef typename protocol::choke choke_type;
 
     streamed():
-        outbox(new synchronized<queue_type>())
+        data(std::make_shared<synchronized<data_t>>())
     { }
 
     template<class... Args>
     typename std::enable_if<
         std::is_constructible<T, Args...>::value,
-        streamed&
+        std::error_code
+    >::type
+    write(hpack::header_storage_t headers, Args&&... args) {
+        auto d = data->synchronize();
+        if (d->state == state_t::closed) {
+            return make_error_code(error::protocol_errors::closed_upstream);
+        }
+
+        return d->outbox.template append<chunk_type>(std::move(headers), std::forward<Args>(args)...);
+    }
+
+    template<class... Args>
+    typename std::enable_if<
+        std::is_constructible<T, Args...>::value,
+        std::error_code
     >::type
     write(Args&&... args) {
-        outbox->synchronize()->template append<typename protocol::chunk>(std::forward<Args>(args)...);
-        return *this;
+        return write({}, std::forward<Args>(args)...);
     }
 
-#if defined(__clang__)
-    streamed&
-    abort(const std::error_code& ec) {
-        outbox->synchronize()->template append<typename protocol::error>(ec);
-        return *this;
-    }
-#endif
+    std::error_code
+    abort(hpack::header_storage_t headers, const std::error_code& ec, const std::string& reason) {
+        return data->apply([&](data_t& data) {
+            if(utility::exchange(data.state, state_t::closed) == state_t::closed) {
+                return make_error_code(error::protocol_errors::closed_upstream);
+            }
 
-    streamed&
+            return data.outbox.template append<error_type>(std::move(headers), ec, reason);
+        });
+    }
+
+    std::error_code
     abort(const std::error_code& ec, const std::string& reason) {
-        outbox->synchronize()->template append<typename protocol::error>(ec, reason);
-        return *this;
+        return abort({}, ec, reason);
     }
 
-    streamed&
+    std::error_code
+    close(hpack::header_storage_t headers) {
+        return data->apply([&](data_t& data) {
+            if (utility::exchange(data.state, state_t::closed) == state_t::closed) {
+                return make_error_code(error::protocol_errors::closed_upstream);
+            }
+
+            return data.outbox.template append<choke_type>(std::move(headers));
+        });
+    }
+
+    std::error_code
     close() {
-        outbox->synchronize()->template append<typename protocol::choke>();
-        return *this;
+        return close({});
     }
 
     template<class UpstreamType>
     void
     attach(UpstreamType&& upstream) {
-        outbox->synchronize()->attach(std::move(upstream));
+        data->synchronize()->outbox.attach(std::move(upstream));
     }
 
 private:
-    const std::shared_ptr<synchronized<queue_type>> outbox;
+    enum class state_t {
+        open,
+        closed
+    };
+
+    struct data_t {
+        data_t(): state(state_t::open) {}
+
+        state_t state;
+        queue_type outbox;
+    };
+
+    const std::shared_ptr<synchronized<data_t>> data;
 };
 
 } // namespace cocaine

@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -18,7 +18,9 @@
     along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "cocaine/rpc/dispatch.hpp"
+#include "cocaine/rpc/basic_dispatch.hpp"
+
+#include "cocaine/errors.hpp"
 
 using namespace cocaine::io;
 
@@ -31,7 +33,7 @@ basic_dispatch_t::~basic_dispatch_t() {
 }
 
 void
-basic_dispatch_t::discard(const std::error_code& COCAINE_UNUSED_(ec)) const {
+basic_dispatch_t::discard(const std::error_code& COCAINE_UNUSED_(ec)) {
     // Empty.
 }
 

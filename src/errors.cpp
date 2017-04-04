@@ -19,36 +19,37 @@
 */
 
 #include "cocaine/errors.hpp"
-
-#include "cocaine/detail/service/locator.hpp"
-#include "cocaine/detail/service/logging.hpp"
-#include "cocaine/detail/service/storage.hpp"
+#include "cocaine/locked_ptr.hpp"
+#include "cocaine/memory.hpp"
 
 #include <asio/error.hpp>
 
-#include <boost/assign/list_of.hpp>
-#include <boost/bimap.hpp>
+#include <vector>
 
 using namespace cocaine;
 using namespace cocaine::error;
 
 namespace {
 
-class unknown_category_t: public std::error_category {
+class unknown_category_t:
+    public std::error_category
+{
     virtual
     auto
     name() const throw() -> const char* {
-        return "unknown error category";
+        return "unknown category";
     }
 
     virtual
     auto
     message(int) const -> std::string {
-        return "unknown error";
+        return "unknown category error";
     }
 };
 
-class transport_category_t: public std::error_category {
+class transport_category_t:
+    public std::error_category
+{
     virtual
     auto
     name() const throw() -> const char* {
@@ -58,20 +59,45 @@ class transport_category_t: public std::error_category {
     virtual
     auto
     message(int code) const -> std::string {
-        if(code == cocaine::error::transport_errors::frame_format_error)
+        switch(code) {
+        case cocaine::error::transport_errors::frame_format_error:
             return "message has an unexpected framing";
-        if(code == cocaine::error::transport_errors::hpack_error)
+        case cocaine::error::transport_errors::hpack_error:
             return "unable to decode message metadata";
-        if(code == cocaine::error::transport_errors::insufficient_bytes)
+        case cocaine::error::transport_errors::insufficient_bytes:
             return "insufficient bytes provided to decode the message";
-        if(code == cocaine::error::transport_errors::parse_error)
+        case cocaine::error::transport_errors::parse_error:
             return "unable to parse the incoming data";
-
-        return cocaine::format("generic %s error", name());
+        default:
+            return "cocaine.rpc.transport error";
+        }
     }
 };
 
-class dispatch_category_t: public std::error_category {
+class protocol_category_t:
+    public std::error_category
+{
+    virtual
+    auto
+    name() const throw() -> const char* {
+        return "cocaine.rpc.protocol";
+    }
+
+    virtual
+    auto
+    message(int code) const -> std::string {
+        switch(code) {
+            case cocaine::error::protocol_errors::closed_upstream:
+                return "protocol violation - upstream was already closed";
+            default:
+                return "cocaine.rpc.protocol error";
+        }
+    }
+};
+
+class dispatch_category_t:
+    public std::error_category
+{
     virtual
     auto
     name() const throw() -> const char* {
@@ -81,26 +107,30 @@ class dispatch_category_t: public std::error_category {
     virtual
     auto
     message(int code) const -> std::string {
-        if(code == cocaine::error::dispatch_errors::duplicate_slot)
+        switch(code) {
+        case cocaine::error::dispatch_errors::duplicate_slot:
             return "duplicate slot";
-        if(code == cocaine::error::dispatch_errors::invalid_argument)
+        case cocaine::error::dispatch_errors::invalid_argument:
             return "unable to decode message arguments";
-        if(code == cocaine::error::dispatch_errors::not_connected)
+        case cocaine::error::dispatch_errors::not_connected:
             return "session is detached";
-        if(code == cocaine::error::dispatch_errors::revoked_channel)
+        case cocaine::error::dispatch_errors::revoked_channel:
             return "specified channel was revoked";
-        if(code == cocaine::error::dispatch_errors::slot_not_found)
+        case cocaine::error::dispatch_errors::slot_not_found:
             return "specified slot is not bound";
-        if(code == cocaine::error::dispatch_errors::unbound_dispatch)
+        case cocaine::error::dispatch_errors::unbound_dispatch:
             return "no dispatch has been assigned for channel";
-        if(code == cocaine::error::dispatch_errors::uncaught_error)
+        case cocaine::error::dispatch_errors::uncaught_error:
             return "uncaught invocation exception";
-
-        return cocaine::format("generic %s error", name());
+        default:
+            return "cocaine.rpc.dispatch error";
+        }
     }
 };
 
-class repository_category_t: public std::error_category {
+class repository_category_t:
+    public std::error_category
+{
     virtual
     auto
     name() const throw() -> const char* {
@@ -110,41 +140,61 @@ class repository_category_t: public std::error_category {
     virtual
     auto
     message(int code) const -> std::string {
-        if(code == cocaine::error::repository_errors::component_not_found)
+        switch(code) {
+        case cocaine::error::repository_errors::component_not_found:
             return "component is not available";
-        if(code == cocaine::error::repository_errors::duplicate_component)
+        case cocaine::error::repository_errors::duplicate_component:
             return "duplicate component";
-        if(code == cocaine::error::repository_errors::initialization_error)
+        case cocaine::error::repository_errors::initialization_error:
             return "component has failed to intialize";
-        if(code == cocaine::error::repository_errors::invalid_interface)
+        case cocaine::error::repository_errors::invalid_interface:
             return "component has an invalid interface";
-        if(code == cocaine::error::repository_errors::ltdl_error)
+        case cocaine::error::repository_errors::dlopen_error:
             return "internal libltdl error";
-        if(code == cocaine::error::repository_errors::version_mismatch)
+        case cocaine::error::repository_errors::version_mismatch:
             return "component version requirements are not met";
-
-        return cocaine::format("generic %s error", name());
+        case cocaine::error::repository_errors::component_not_registered:
+            return "component has not been registered in repository";
+        default:
+            return "cocaine.repository error";
+        }
     }
 };
 
-class security_category_t: public std::error_category {
+class security_category_t:
+    public std::error_category
+{
     virtual
     auto
     name() const throw() -> const char* {
-        return "cocaine.security";
+        return "cocaine security";
     }
 
     virtual
     auto
     message(int code) const -> std::string {
-        if(code == cocaine::error::security_errors::token_not_found)
+        switch (code) {
+        case security_errors::token_not_found:
             return "specified token is not available";
+        case security_errors::unauthorized:
+            return "unauthorized";
+        case security_errors::permission_denied:
+            return "permission denied";
+        case security_errors::permissions_changed:
+            return "permissions changed";
+        case security_errors::invalid_acl_framing:
+            return "invalid ACL framing";
+        }
 
-        return cocaine::format("generic %s error", name());
+        return cocaine::format("{} - {}", name(), code);
     }
 };
 
-struct locator_category_t: public std::error_category {
+// Locator errors
+
+struct locator_category_t:
+public std::error_category
+{
     virtual
     auto
     name() const throw() -> const char* {
@@ -154,14 +204,53 @@ struct locator_category_t: public std::error_category {
     virtual
     auto
     message(int code) const -> std::string {
-        if(code == cocaine::error::locator_errors::service_not_available)
+        switch(code) {
+        case cocaine::error::locator_errors::service_not_available:
             return "service is not available";
-        if(code == cocaine::error::locator_errors::routing_storage_error)
+        case cocaine::error::locator_errors::routing_storage_error:
             return "routing storage is unavailable";
-        if(code == cocaine::error::locator_errors::missing_version_error)
+        case cocaine::error::locator_errors::missing_version_error:
             return "missing protocol version";
+        case cocaine::error::locator_errors::gateway_duplicate_service:
+            return "duplicate service provided to gateway";
+        case cocaine::error::locator_errors::gateway_missing_service:
+            return "service is missing in gateway";
+        }
 
-        return cocaine::format("generic %s error", name());
+        return "cocaine.service.locator error";
+    }
+};
+
+class unicorn_category_t:
+    public std::error_category
+{
+    virtual
+    auto
+    name() const throw() -> const char* {
+        return "cocaine.plugins.unicorn";
+    }
+
+    virtual
+    auto
+    message(int code) const -> std::string {
+        switch (code) {
+        case child_not_allowed:
+            return "can not get value of a node with childs";
+        case invalid_type:
+            return "invalid type of value stored for requested operation";
+        case invalid_value:
+            return "could not unserialize value stored in zookeeper";
+        case unknown_error:
+            return "unknown zookeeper error";
+        case invalid_node_name:
+            return "invalid node name specified";
+        case invalid_path:
+            return "invalid path specified";
+        case version_not_allowed:
+            return "specified version is not allowed for command";
+        default:
+            return std::string("Unknown unicorn error - ") + std::to_string(code);
+        }
     }
 };
 
@@ -174,6 +263,12 @@ unknown_category() -> const std::error_category& {
 auto
 transport_category() -> const std::error_category& {
     static transport_category_t instance;
+    return instance;
+}
+
+auto
+protocol_category() -> const std::error_category& {
+    static protocol_category_t instance;
     return instance;
 }
 
@@ -196,6 +291,12 @@ security_category() -> const std::error_category& {
 }
 
 auto
+unicorn_category() -> const std::error_category& {
+    static unicorn_category_t instance;
+    return instance;
+}
+
+auto
 locator_category() -> const std::error_category& {
     static locator_category_t instance;
     return instance;
@@ -208,6 +309,11 @@ namespace cocaine { namespace error {
 auto
 make_error_code(transport_errors code) -> std::error_code {
     return std::error_code(static_cast<int>(code), transport_category());
+}
+
+auto
+make_error_code(protocol_errors code) -> std::error_code {
+    return std::error_code(static_cast<int>(code), protocol_category());
 }
 
 auto
@@ -230,11 +336,14 @@ make_error_code(locator_errors code) -> std::error_code {
     return std::error_code(static_cast<int>(code), locator_category());
 }
 
-// Generic error message formatting
+auto
+make_error_code(unicorn_errors code) -> std::error_code {
+    return std::error_code(static_cast<int>(code), unicorn_category());
+}
 
 std::string
 to_string(const std::system_error& e) {
-    return cocaine::format("[%d] %s", e.code().value(), e.what());
+    return cocaine::format("[{}] {}", e.code().value(), e.what());
 }
 
 const std::error_code
@@ -244,72 +353,84 @@ error_t::kInvalidArgumentErrorCode = std::make_error_code(std::errc::invalid_arg
 
 // Error category registrar
 
-struct
-registrar::impl_type {
-    struct uid_tag;
-    struct ptr_tag;
+namespace {
+struct category_record_t {
+    size_t id;
+    const std::error_category* category;
+};
+}
+class registrar::storage_type {
+public:
+    typedef std::vector<category_record_t> mapping_t;
 
-    typedef boost::bimap<
-        boost::bimaps::tagged<std::size_t,                 uid_tag>,
-        boost::bimaps::tagged<std::error_category const *, ptr_tag>
-    > mapping_t;
+    synchronized<mapping_t> mapping;
 
-    mapping_t mapping;
-
-    // Dynamic error category name-based hash.
-    std::hash<std::string> hash;
-
-    impl_type();
+    storage_type() {
+        mapping.unsafe() = mapping_t({
+            {0x01, &std::system_category()              },
+            {0x02, &asio::error::get_system_category()  },
+            {0x03, &asio::error::get_netdb_category()   },
+            {0x04, &asio::error::get_addrinfo_category()},
+            {0x05, &asio::error::get_misc_category()    },
+            {0x06, &transport_category()                },
+            {0x07, &dispatch_category()                 },
+            {0x08, &repository_category()               },
+            {0x09, &security_category()                 },
+            {0x0A, &locator_category()                  },
+            {0x0B, &unicorn_category()                  },
+            {0x0C, &std::generic_category()             },
+            {0x0D, &protocol_category()                 },
+            {0xFF, &unknown_category()                  }
+        });
+    }
 };
 
-registrar::impl_type::impl_type() {
-    mapping = boost::assign::list_of<mapping_t::relation>
-        (0x01, &std::system_category()              )
-        (0x02, &asio::error::get_system_category()  )
-        (0x03, &asio::error::get_netdb_category()   )
-        (0x04, &asio::error::get_addrinfo_category())
-        (0x05, &asio::error::get_misc_category()    )
-        (0x06, &transport_category()                )
-        (0x07, &dispatch_category()                 )
-        (0x08, &repository_category()               )
-        (0x09, &security_category()                 )
-        (0x0A, &locator_category()                  )
-        (0xFF, &unknown_category()                  );
-}
-
-synchronized<std::unique_ptr<registrar::impl_type>> registrar::ptr(std::make_unique<impl_type>());
-
 auto
-registrar::add(const std::error_category& ec) -> size_t {
-    return ptr.apply([&](std::unique_ptr<impl_type>& impl) -> size_t {
-        size_t index = impl->hash(ec.name()) | 0xFF;
-
-        if(impl->mapping.insert({index, &ec}).second) {
-            return index;
-        } else {
-            throw error_t("duplicate error category");
+registrar::add(const std::error_category& ec, size_t index) -> void {
+    instance().mapping.apply([&](storage_type::mapping_t& mapping){
+        auto comp = [=](const category_record_t& item) {
+            return item.id == index;
+        };
+        auto it = std::find_if(mapping.begin(), mapping.end(), comp);
+        if(it == mapping.end()){
+            mapping.push_back(category_record_t{index, &ec});
+        } else if(std::strcmp(it->category->name(), ec.name()) != 0) {
+            throw error_t("duplicate error category '{}' for index {}, already have '{}'", ec.name(), index, it->category->name());
         }
     });
 }
 
 auto
 registrar::map(const std::error_category& ec) -> size_t {
-    return ptr.apply([&](const std::unique_ptr<impl_type>& impl) -> size_t {
-        if(impl->mapping.by<impl_type::ptr_tag>().count(&ec) == 0) {
+    return instance().mapping.apply([&](storage_type::mapping_t& mapping) ->size_t {
+        auto comp = [&](const category_record_t& item) {
+            return strcmp(item.category->name(), ec.name()) == 0;
+        };
+        auto it = std::find_if(mapping.begin(), mapping.end(), comp);
+        if(it == mapping.end()) {
             return 0xFF;
         } else {
-            return impl->mapping.by<impl_type::ptr_tag>().at(&ec);
+            return it->id;
         }
     });
 }
 
 auto
 registrar::map(size_t id) -> const std::error_category& {
-    return ptr.apply([&](const std::unique_ptr<impl_type>& impl) -> const std::error_category& {
-        if(impl->mapping.by<impl_type::uid_tag>().count(id) == 0) {
+    return instance().mapping.apply([&](storage_type::mapping_t& mapping) -> const std::error_category& {
+        auto comp = [=](const category_record_t& item) {
+            return item.id == id;
+        };
+        auto it = std::find_if(mapping.begin(), mapping.end(), comp);
+        if(it == mapping.end()) {
             return unknown_category();
         } else {
-            return *impl->mapping.by<impl_type::uid_tag>().at(id);
+            return *it->category;
         }
     });
+}
+
+auto registrar::instance() -> storage_type& {
+    static storage_type self;
+    return self;
 }

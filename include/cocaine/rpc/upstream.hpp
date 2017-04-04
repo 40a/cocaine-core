@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -22,6 +22,7 @@
 #define COCAINE_IO_UPSTREAM_HPP
 
 #include "cocaine/rpc/session.hpp"
+#include "cocaine/trace/trace.hpp"
 
 namespace cocaine {
 
@@ -30,31 +31,53 @@ template<class Tag> class upstream;
 namespace io {
 
 class basic_upstream_t {
-    const std::shared_ptr<session_t> session;
-    const uint64_t channel_id;
+    const std::shared_ptr<session_t> m_session;
+    const uint64_t m_channel_id;
 
 public:
-    basic_upstream_t(const std::shared_ptr<session_t>& session_, uint64_t channel_id_):
-        session(session_),
-        channel_id(channel_id_)
+    basic_upstream_t(const std::shared_ptr<session_t>& session, uint64_t channel_id):
+        m_session(session),
+        m_channel_id(channel_id)
     { }
+
+    /// Detaches underlying session and closes connection.
+    ///
+    /// This will discard all active chanels and close connecton to client,
+    /// it can only be used as a last resort to signal unrecoverable error.
+    void
+    detach_session(const std::error_code& ec) {
+        m_session->detach(ec);
+    }
+
+    void
+    send(encoder_t::message_type message) {
+        m_session->push(std::move(message));
+    };
+
+    uint64_t
+    channel_id() const {
+        return m_channel_id;
+    }
 
     template<class Event, class... Args>
     void
     send(Args&&... args);
 
-    // We only pass trace to client-side upstream, because we want to group all client-side sends
-    // under one trace_id. Server-side upstream will have boost::none here.
-    boost::optional<trace_t> trace;
+    template<class Event, class... Args>
+    void
+    send(hpack::header_storage_t headers, Args&&... args);
 };
 
 template<class Event, class... Args>
 void
-basic_upstream_t::send(Args&&... args) {
-    trace_t::restore_scope_t scope(trace);
+basic_upstream_t::send(hpack::header_storage_t headers, Args&&... args) {
+    m_session->push(encoded<Event>(m_channel_id, std::move(headers), std::forward<Args>(args)...));
+}
 
-    // TRACE: this will send cs/ss Zipkin messages if the scope was restored successfully.
-    session->push(encoded<Event>(channel_id, std::forward<Args>(args)...));
+template<class Event, class... Args>
+void
+basic_upstream_t::send(Args&&... args) {
+    m_session->push(encoded<Event>(m_channel_id, std::forward<Args>(args)...));
 }
 
 // Forwards for the upstream<T> class
@@ -80,6 +103,20 @@ public:
     upstream(Stream&& ptr,
              typename allowing<Tag, Stream>::type* = nullptr): ptr(std::forward<Stream>(ptr))
     { }
+
+    template<class Event, class... Args>
+    upstream<typename io::event_traits<Event>::dispatch_type>
+    send(hpack::header_storage_t headers, Args&&... args) {
+        static_assert(
+            std::is_same<typename Event::tag, Tag>::value,
+            "message protocol is not compatible with this upstream"
+        );
+
+        ptr->send<Event>(std::move(headers), std::forward<Args>(args)...);
+
+        // Move the actual upstream pointer down the graph.
+        return std::move(ptr);
+    }
 
     template<class Event, class... Args>
     upstream<typename io::event_traits<Event>::dispatch_type>

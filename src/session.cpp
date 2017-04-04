@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -20,15 +20,23 @@
 
 #include "cocaine/rpc/session.hpp"
 
-#include "cocaine/logging.hpp"
-
-#include "cocaine/rpc/asio/transport.hpp"
-
-#include "cocaine/rpc/dispatch.hpp"
-#include "cocaine/rpc/upstream.hpp"
-
 #include <asio/ip/tcp.hpp>
 #include <asio/local/stream_protocol.hpp>
+
+#include <blackhole/logger.hpp>
+
+#include <metrics/accumulator/sliding/window.hpp>
+#include <metrics/accumulator/snapshot/uniform.hpp>
+#include <metrics/meter.hpp>
+#include <metrics/registry.hpp>
+#include <metrics/timer.hpp>
+
+#include "cocaine/hpack/static_table.hpp"
+#include "cocaine/logging.hpp"
+#include "cocaine/rpc/asio/transport.hpp"
+#include "cocaine/rpc/basic_dispatch.hpp"
+#include "cocaine/rpc/dispatch.hpp"
+#include "cocaine/rpc/upstream.hpp"
 
 using namespace cocaine;
 using namespace cocaine::io;
@@ -70,7 +78,7 @@ void
 session_t::pull_action_t::finalize(const std::error_code& ec) {
     if(ec) {
         if(ec != asio::error::eof) {
-            COCAINE_LOG_ERROR(session->log, "client disconnected: [%d] %s", ec.value(), ec.message());
+            COCAINE_LOG_ERROR(session->log, "client disconnected: [{:d}] {}", ec.value(), ec.message());
         } else {
             COCAINE_LOG_DEBUG(session->log, "client disconnected");
         }
@@ -86,17 +94,18 @@ session_t::pull_action_t::finalize(const std::error_code& ec) {
         try {
             // NOTE: In case the underlying slot has miserably failed to handle its exceptions, the
             // client will be disconnected to prevent any further damage to the service and himself.
+
+            // TODO: it seems that we can move it into and process message everywhere by value
+            // This can help to avoid unnecsesarry headers copy
             session->handle(message);
+            message.clear();
         } catch(const std::system_error& e) {
-            COCAINE_LOG_ERROR(session->log, "uncaught invocation exception: %s", error::to_string(e));
+            COCAINE_LOG_ERROR(session->log, "uncaught invocation exception: {}", error::to_string(e));
             return session->detach(e.code());
         } catch(const std::exception& e) {
-            COCAINE_LOG_ERROR(session->log, "uncaught invocation exception: %s", e.what());
+            COCAINE_LOG_ERROR(session->log, "uncaught invocation exception: {}", e.what());
             return session->detach(error::uncaught_error);
         }
-
-        // Removes the metadata from the previously received message since HPACK doesn't do cleanup.
-        message.clear();
 
         // Cycle the transport back into the message pump.
         operator()(std::move(ptr));
@@ -131,9 +140,9 @@ void
 session_t::push_action_t::operator()(const std::shared_ptr<transport_type> ptr) {
     if(!trace_t::current().empty()) {
         if(trace_t::current().pushed()) {
-            COCAINE_LOG_INFO(session->log, "cs");
+            COCAINE_LOG_DEBUG(session->log, "cs");
         } else {
-            COCAINE_LOG_INFO(session->log, "ss");
+            COCAINE_LOG_DEBUG(session->log, "ss");
         }
     }
 
@@ -145,12 +154,11 @@ session_t::push_action_t::operator()(const std::shared_ptr<transport_type> ptr) 
 
 void
 session_t::push_action_t::finalize(const std::error_code& ec) {
-    COCAINE_LOG_ZIPKIN(session->log, "after send");
+    COCAINE_LOG_DEBUG(session->log, "after send");
+    if(ec.value() == 0) return;
 
-    if(ec.value() == 0) {
-        return;
-    } else if(ec != asio::error::eof) {
-        COCAINE_LOG_ERROR(session->log, "client disconnected: [%d] %s", ec.value(), ec.message());
+    if(ec != asio::error::eof) {
+        COCAINE_LOG_ERROR(session->log, "client disconnected: [{:d}] {}", ec.value(), ec.message());
     } else {
         COCAINE_LOG_DEBUG(session->log, "client disconnected");
     }
@@ -161,27 +169,73 @@ session_t::push_action_t::finalize(const std::error_code& ec) {
 class session_t::channel_t
 {
 public:
-    channel_t(const dispatch_ptr_t& dispatch_, const upstream_ptr_t& upstream_):
-        dispatch(dispatch_),
-        upstream(upstream_)
-    { }
+    channel_t(const dispatch_ptr_t& dispatch_,
+              const upstream_ptr_t& upstream_,
+              std::unique_ptr<metrics::timer_t::context_t> context_,
+              boost::optional<trace_t> trace_)
+        : dispatch(dispatch_), upstream(upstream_), context(std::move(context_)), trace(std::move(trace_)) {}
 
     dispatch_ptr_t dispatch;
     upstream_ptr_t upstream;
+    std::unique_ptr<metrics::timer_t::context_t> context;
+    boost::optional<trace_t> trace;
 };
 
 // Session
 
-session_t::session_t(
-    std::unique_ptr<logging::log_t> log_,
-    std::unique_ptr<transport_type> transport_,
-    const dispatch_ptr_t& prototype_
-):
-    log(std::move(log_)),
-    transport(std::shared_ptr<transport_type>(std::move(transport_))),
-    prototype(prototype_),
-    max_channel_id(0)
-{ }
+struct session_t::metrics_t {
+    metrics::shared_metric<metrics::meter_t> summary;
+
+    /// Timers per slot.
+    std::map<
+        int,
+        metrics::shared_metric<metrics::timer<metrics::accumulator::sliding::window_t>>
+    > timers;
+};
+
+session_t::session_t(std::unique_ptr<logging::logger_t> log_,
+                     metrics::registry_t& metrics_hub,
+                     std::unique_ptr<transport_type> transport_,
+                     const dispatch_ptr_t& prototype_)
+    : log(std::move(log_)),
+      transport(std::shared_ptr<transport_type>(std::move(transport_))),
+      prototype(prototype_),
+      max_channel_id(0)
+{
+    if (prototype) {
+        metrics.reset(
+            new metrics_t{
+                metrics_hub.meter(cocaine::format("{}.meter.summary", prototype->name())),
+                {}
+            }
+        );
+
+        for (const auto& item : prototype->root()) {
+            const auto id = std::get<0>(item);
+            const auto& name = std::get<0>(std::get<1>(item));
+
+            metrics->timers.insert(
+                std::make_pair(
+                    id,
+                    metrics_hub.timer(cocaine::format("{}.timer[{}]", prototype->name(), name))
+                )
+            );
+        }
+    }
+
+    auto dispatch = std::make_shared<cocaine::dispatch<io::control_tag>>("session");
+
+    dispatch->on<io::control::ping>([&] {
+        return;
+    });
+    dispatch->on<io::control::revoke>([&](std::uint64_t id, std::error_code ec) {
+        revoke(id, ec);
+    });
+
+    service_dispatch = std::move(dispatch);
+}
+
+session_t::~session_t() = default;
 
 // Operations
 
@@ -203,31 +257,45 @@ session_t::handle(const decoder_t::message_type& message) {
                 throw std::system_error(error::revoked_channel, std::to_string(channel_id));
             }
 
-            std::tie(lb, std::ignore) = mapping.insert({channel_id, std::make_shared<channel_t>(
-                prototype,
-                // Do not store trace if we handling server side.
-                std::make_shared<basic_upstream_t>(shared_from_this(), channel_id)
-            )});
+            auto& headers = message.headers();
 
-            max_channel_id = channel_id;
-        }
-
-        if(!lb->second->upstream->trace) {
-            auto trace_header = message.meta<hpack::headers::trace_id<>>();
-            auto span_header = message.meta<hpack::headers::span_id<>>();
-            auto parent_header = message.meta<hpack::headers::parent_id<>>();
-
+            auto trace_header = hpack::header::find_first<hpack::headers::trace_id<>>(headers);
+            auto span_header = hpack::header::find_first<hpack::headers::span_id<>>(headers);
+            auto parent_header = hpack::header::find_first<hpack::headers::parent_id<>>(headers);
             if(trace_header && span_header && parent_header) {
+                bool verbose = false;
+                if (auto header = hpack::header::find_first(headers, "trace_bit")) {
+                    verbose = hpack::header::unpack<bool>(header->value());
+                }
+
                 incoming_trace = trace_t(
-                    trace_header->get_value().convert<uint64_t>(),
-                    span_header->get_value().convert<uint64_t>(),
-                    parent_header->get_value().convert<uint64_t>(),
-                    // TODO(@antmat): This can throw.
-                    std::get<0>(lb->second->dispatch->root().at(message.type()))
+                    hpack::header::unpack<uint64_t>(trace_header->value()),
+                    hpack::header::unpack<uint64_t>(span_header->value()),
+                    hpack::header::unpack<uint64_t>(parent_header->value()),
+                    verbose,
+                    std::get<0>(prototype->root().at(message.type()))
                 );
             }
+
+            io::dispatch_ptr_t dispatch;
+
+            if(message.type() < prototype->root().size()) {
+                dispatch = prototype;
+            } else {
+                dispatch = service_dispatch;
+            }
+
+            std::tie(lb, std::ignore) = mapping.insert({channel_id, std::make_shared<channel_t>(
+                dispatch,
+                std::make_shared<basic_upstream_t>(shared_from_this(), channel_id),
+                std::make_unique<metrics::timer_t::context_t>(metrics->timers.at(message.type())->context()),
+                incoming_trace
+            )});
+            metrics->summary->mark();
+
+            max_channel_id = channel_id;
         } else {
-            incoming_trace = lb->second->upstream->trace;
+            incoming_trace = lb->second->trace;
         }
 
         // NOTE: The virtual channel pointer is copied here to avoid data races.
@@ -235,12 +303,12 @@ session_t::handle(const decoder_t::message_type& message) {
     });
 
     if(!channel->dispatch) {
-        throw std::system_error(error::unbound_dispatch, std::to_string(channel_id));
+        throw std::system_error(error::unbound_dispatch);
     }
 
     trace_t::restore_scope_t trace_scope(incoming_trace);
 
-    COCAINE_LOG_DEBUG(log, "invocation type %llu: '%s' in channel %llu, dispatch: '%s'",
+    COCAINE_LOG_DEBUG(log, "invocation type {}: '{}' in channel {}, dispatch: '{}'",
         message.type(),
         channel->dispatch->root().count(message.type()) ?
             std::get<0>(channel->dispatch->root().at(message.type()))
@@ -250,44 +318,46 @@ session_t::handle(const decoder_t::message_type& message) {
 
     if(!trace_t::current().empty()) {
         if(trace_t::current().pushed()) {
-            COCAINE_LOG_INFO(log, "cr");
+            COCAINE_LOG_DEBUG(log, "cr");
             trace_t::current().pop();
         } else {
-            COCAINE_LOG_INFO(log, "sr");
+            COCAINE_LOG_DEBUG(log, "sr");
         }
     }
 
-    auto transition = channel->dispatch->process(message.type(), rpc_t {
-        message.args(),
-        channel->upstream
-#if BOOST_VERSION < 105600
-    }).get_value_or(channel->dispatch);
-#else
-    }).value_or(std::move(channel->dispatch));
-#endif
-
-    // NOTE: If the client has sent us the last message according to our dispatch graph, revoke the
-    // channel. No-op if the channel is no longer in the mapping, e.g. was discarded during session
-    // detaching, which was called during the dispatch::process().
-    if((channel->dispatch = std::move(transition)) == nullptr) revoke(channel_id);
+    if((channel->dispatch = channel->dispatch->process(message, channel->upstream)
+        .get_value_or(channel->dispatch)) == nullptr)
+    {
+        // NOTE: If the client has sent us the last message according to our dispatch graph, revoke
+        // the channel. No-op if the channel is no longer in the mapping, e.g., was discarded during
+        // session::detach(), which was called during the dispatch::process().
+        if(!channel.unique()) {
+            revoke(channel_id);
+        }
+    }
 }
 
 void
-session_t::revoke(uint64_t channel_id) {
+session_t::revoke(uint64_t id) {
+    revoke(id, std::error_code());
+}
+
+void
+session_t::revoke(uint64_t id, std::error_code ec) {
     channels.apply([&](channel_map_t& mapping) {
-        auto it = mapping.find(channel_id);
+        auto it = mapping.find(id);
 
         if(it == mapping.end()) {
-            COCAINE_LOG_WARNING(log, "ignoring revoke request for channel %d", channel_id);
+            COCAINE_LOG_WARNING(log, "ignoring revoke request for channel {:d}", id);
             return;
         }
 
         if(it->second->dispatch) {
-            COCAINE_LOG_ERROR(log, "revoking channel %d, dispatch: '%s'", channel_id,
+            COCAINE_LOG_ERROR(log, "revoking channel {:d}, dispatch: '{}'", id,
                 it->second->dispatch->name());
-            it->second->dispatch->discard(std::error_code());
+            it->second->dispatch->discard(ec);
         } else {
-            COCAINE_LOG_DEBUG(log, "revoking channel %d", channel_id);
+            COCAINE_LOG_DEBUG(log, "revoking channel {:d}", id);
         }
 
         mapping.erase(it);
@@ -298,23 +368,22 @@ upstream_ptr_t
 session_t::fork(const dispatch_ptr_t& dispatch) {
     return channels.apply([&](channel_map_t& mapping) -> upstream_ptr_t {
         const auto channel_id = ++max_channel_id;
+        auto trace = trace_t::current();
+        trace.push(dispatch->name());
         const auto downstream = std::make_shared<basic_upstream_t>(shared_from_this(), channel_id);
 
-        // TRACE: Either current trace if this was forked from an incoming request, or a new one.
-        downstream->trace = trace_t::current();
-
-        COCAINE_LOG_DEBUG(log, "forking new channel %d, dispatch: '%s'", channel_id,
+        COCAINE_LOG_DEBUG(log, "forking new channel {:d}, dispatch: '{}'", channel_id,
             dispatch ? dispatch->name() : "<none>");
 
         if(dispatch) {
-            downstream->trace->push(dispatch->name());
-
             // NOTE: For mute slots, creating a new channel will essentially leak memory, since no
             // response will ever be sent back, therefore the channel will never be revoked at all.
-            mapping.insert({channel_id, std::make_shared<channel_t>(dispatch, downstream)});
-        } else {
-            // It is not clear whether it makes much sense to have a trace with "<none>" in RPC ID.
-            downstream->trace->push("<none>");
+            mapping.insert({channel_id, std::make_shared<channel_t>(
+                dispatch,
+                downstream,
+                nullptr,
+                trace
+            )});
         }
 
         return downstream;
@@ -375,7 +444,7 @@ session_t::detach(const std::error_code& ec) {
         if(mapping.empty()) {
             return;
         } else {
-            COCAINE_LOG_DEBUG(log, "discarding %d channel dispatch(es)", mapping.size());
+            COCAINE_LOG_DEBUG(log, "discarding {:d} channel dispatch(es)", mapping.size());
         }
 
         for(auto it = mapping.begin(); it != mapping.end(); ++it) {
@@ -440,23 +509,23 @@ session_t::remote_endpoint() const {
 
 namespace cocaine {
 
-template<class Protocol>
-session<Protocol>::session(
-    std::unique_ptr<logging::log_t> log,
-    std::unique_ptr<transport_type> transport,
-    const dispatch_ptr_t& prototype):
-session_t(
-    std::move(log),
-    std::make_unique<io::transport<generic::stream_protocol>>(std::move(*transport)),
-    prototype)
-{ }
+template <class Protocol>
+session<Protocol>::session(std::unique_ptr<logging::logger_t> log,
+                           metrics::registry_t& metrics_hub,
+                           std::unique_ptr<transport_type> transport,
+                           const dispatch_ptr_t& prototype)
+    : session_t(std::move(log),
+                metrics_hub,
+                std::make_unique<io::transport<generic::stream_protocol>>(std::move(*transport)),
+                std::move(prototype)) {}
 
 template<>
 typename session<ip::tcp>::endpoint_type
 session<ip::tcp>::remote_endpoint() const {
     const auto source = session_t::remote_endpoint();
 
-    BOOST_ASSERT(source.protocol() == ip::tcp::v4() || source.protocol() == ip::tcp::v6());
+    // TODO: Uncomment. In our production we receive protocol == 0.
+    // BOOST_ASSERT(source.protocol() == ip::tcp::v4() || source.protocol() == ip::tcp::v6());
 
     auto transformed = ip::tcp::endpoint();
 

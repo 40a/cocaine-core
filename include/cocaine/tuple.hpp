@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -32,19 +32,6 @@
 
 namespace cocaine { namespace tuple {
 
-// Tuple element selection functor for standard algorithms
-
-template<size_t N>
-struct nth_element {
-    template<class Tuple>
-    typename std::tuple_element<N, Tuple>::type
-    operator()(const Tuple& tuple) const {
-        return std::get<N>(tuple);
-    }
-};
-
-// Folding MPL lists into a tuple's template argument pack
-
 namespace aux {
 
 template<class It, class End, class... Args>
@@ -62,20 +49,6 @@ struct fold_impl<End, End, Args...> {
     typedef std::tuple<Args...> type;
 };
 
-} // namespace aux
-
-template<typename TypeList>
-struct fold {
-    typedef typename aux::fold_impl<
-        typename boost::mpl::begin<TypeList>::type,
-        typename boost::mpl::end  <TypeList>::type
-    >::type type;
-};
-
-// Function invocation with arguments provided as a tuple
-
-namespace aux {
-
 template<class IndexSequence>
 struct invoke_impl;
 
@@ -87,7 +60,7 @@ struct invoke_impl<index_sequence<Indices...>> {
     apply(const std::tuple<Args...>& args, F&& callable)
         -> decltype(callable(std::declval<Args>()...))
     {
-        return callable(std::move(std::get<Indices>(args))...);
+        return callable(std::get<Indices>(args)...);
     }
 
     template<class F, class... Args>
@@ -100,7 +73,30 @@ struct invoke_impl<index_sequence<Indices...>> {
     }
 };
 
+template<class IndexSequence>
+struct pop_front_impl;
+
+template<size_t... Idx>
+struct pop_front_impl<index_sequence<Idx...>> {
+    template<typename T, typename... Args>
+    static
+    auto
+    apply(std::tuple<T, Args...> tuple) -> std::tuple<Args...> {
+        return std::make_tuple(std::move(std::get<1 + Idx>(tuple))...);
+    }
+};
+
 } // namespace aux
+
+template<typename TypeList>
+struct fold {
+    typedef typename aux::fold_impl<
+        typename boost::mpl::begin<TypeList>::type,
+        typename boost::mpl::end  <TypeList>::type
+    >::type type;
+};
+
+// Function invocation with arguments provided as a tuple
 
 template<class F, class... Args>
 inline
@@ -122,6 +118,23 @@ invoke(std::tuple<Args...>&& args, F&& callable)
     return aux::invoke_impl<
         typename make_index_sequence<sizeof...(Args)>::type
     >::apply(std::move(args), std::forward<F>(callable));
+}
+
+/// Consumes the given non-empty tuple, returning a new tuple without the front element.
+///
+/// # Examples
+///
+/// ```
+/// auto tuple = std::make_tuple(42, 3.1415, "le message");
+///
+/// assert(std::make_tuple(3.1415, "le message") == tuple::pop_front(std::move(tuple)));
+/// ```
+template<typename T, typename... Args>
+auto
+pop_front(std::tuple<T, Args...> tuple) -> std::tuple<Args...> {
+    return aux::pop_front_impl<
+        typename make_index_sequence<sizeof...(Args)>::type
+    >::apply(std::move(tuple));
 }
 
 }} // namespace cocaine::tuple

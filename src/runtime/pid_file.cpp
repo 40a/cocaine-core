@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -19,6 +19,7 @@
 */
 
 #include "cocaine/detail/runtime/pid_file.hpp"
+#include "cocaine/errors.hpp"
 
 #include <csignal>
 
@@ -40,7 +41,7 @@ pid_file_t::pid_file_t(const fs::path& filepath):
         fs::ifstream stream(m_filepath);
 
         if(!stream) {
-            throw cocaine::error_t("unable to read '%s'", m_filepath.string());
+            throw cocaine::error_t("unable to read '{}'", m_filepath.string());
         }
 
         pid_t pid;
@@ -58,7 +59,7 @@ pid_file_t::pid_file_t(const fs::path& filepath):
     fs::ofstream stream(m_filepath);
 
     if(!stream) {
-        throw cocaine::error_t("unable to write '%s'", m_filepath.string());
+        throw cocaine::error_t("unable to write '{}'", m_filepath.string());
     }
 
     stream << ::getpid();
@@ -78,6 +79,6 @@ pid_file_t::remove() {
     try {
         fs::remove(m_filepath);
     } catch(const fs::filesystem_error& e) {
-        throw cocaine::error_t("unable to remove '%s'", m_filepath.string());
+        throw cocaine::error_t("unable to remove '{}'", m_filepath.string());
     }
 }

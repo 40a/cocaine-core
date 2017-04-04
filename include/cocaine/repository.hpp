@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -22,12 +22,15 @@
 #define COCAINE_REPOSITORY_HPP
 
 #include "cocaine/common.hpp"
-#include "cocaine/logging.hpp"
+#include "cocaine/errors.hpp"
+#include "cocaine/memory.hpp"
 
+#include <boost/assert.hpp>
+
+#include <map>
 #include <typeinfo>
 #include <type_traits>
-
-#include <ltdl.h>
+#include <vector>
 
 namespace cocaine { namespace api {
 
@@ -70,13 +73,21 @@ struct plugin_traits {
 // Component repository
 
 class repository_t {
+public:
+    struct
+    dlclose_action_t {
+        void
+        operator()(void* plugin) const;
+    };
+
+private:
+
     COCAINE_DECLARE_NONCOPYABLE(repository_t)
 
-    const std::unique_ptr<logging::log_t> m_log;
+    const std::unique_ptr<logging::logger_t> m_log;
 
-    // NOTE: Used to unload all the plugins on shutdown. Cannot use a forward declaration here due
-    // to the implementation details.
-    std::vector<lt_dlhandle> m_plugins;
+    // Pointers returned by dlopen. Used to unload all the plugins on shutdown.
+    std::vector<std::unique_ptr<void, dlclose_action_t>> m_plugins;
 
     typedef std::map<std::string, std::unique_ptr<factory_concept_t>> factory_map_t;
     typedef std::map<std::string, factory_map_t> category_map_t;
@@ -85,12 +96,10 @@ class repository_t {
 
 public:
     explicit
-    repository_t(std::unique_ptr<logging::log_t> log);
-
-   ~repository_t();
+    repository_t(std::unique_ptr<logging::logger_t> log);
 
     void
-    load(const std::string& path);
+    load(const std::vector<std::string>& plugin_dirs);
 
     template<class Category, class... Args>
     typename category_traits<Category>::ptr_type
@@ -100,9 +109,16 @@ public:
     void
     insert(const std::string& name);
 
+    template<class T>
+    void
+    insert(const std::string& name, std::unique_ptr<typename plugin_traits<T>::factory_type> factory);
+
 private:
     void
     open(const std::string& target);
+
+    void
+    insert(const std::string& id, const std::string& name, std::unique_ptr<factory_concept_t> factory);
 };
 
 template<class Category, class... Args>
@@ -111,7 +127,7 @@ repository_t::get(const std::string& name, Args&&... args) const {
     const auto id = typeid(Category).name();
 
     if(!m_categories.count(id) || !m_categories.at(id).count(name)) {
-        throw std::system_error(error::component_not_found, name);
+        throw std::system_error(error::component_not_registered, format("{}[{}]", name, typeid(Category).name()));
     }
 
     auto it = m_categories.at(id).find(name);
@@ -127,6 +143,14 @@ repository_t::get(const std::string& name, Args&&... args) const {
 template<class T>
 void
 repository_t::insert(const std::string& name) {
+    typedef typename plugin_traits<T>::factory_type factory_type;
+
+    insert<T>(name, std::make_unique<factory_type>());
+}
+
+template<class T>
+void
+repository_t::insert(const std::string& name, std::unique_ptr<typename plugin_traits<T>::factory_type> factory) {
     typedef typename T::category_type category_type;
     typedef typename plugin_traits<T>::factory_type factory_type;
 
@@ -140,18 +164,7 @@ repository_t::insert(const std::string& name) {
         "component factory is not derived from its category"
     );
 
-    const auto id = typeid(category_type).name();
-
-    if(m_categories.count(id) && m_categories.at(id).count(name)) {
-        throw std::system_error(error::duplicate_component, name);
-    }
-
-    COCAINE_LOG_DEBUG(m_log, "registering component '%s' in category '%s'",
-        name,
-        logging::demangle<category_type>()
-    );
-
-    m_categories[id][name] = std::make_unique<factory_type>();
+    insert(typeid(category_type).name(), name, std::move(factory));
 }
 
 struct preconditions_t {

@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -22,15 +22,16 @@
 #define COCAINE_IO_DISPATCH_HPP
 
 #include "cocaine/common.hpp"
+#include "cocaine/hpack/header.hpp"
 #include "cocaine/locked_ptr.hpp"
-
+#include "cocaine/rpc/basic_dispatch.hpp"
 #include "cocaine/rpc/slot/blocking.hpp"
 #include "cocaine/rpc/slot/deferred.hpp"
+#include "cocaine/rpc/slot/generic.hpp"
 #include "cocaine/rpc/slot/streamed.hpp"
-
 #include "cocaine/rpc/traversal.hpp"
-
 #include "cocaine/traits/tuple.hpp"
+#include "cocaine/utility/exchange.hpp"
 
 #include <boost/mpl/transform.hpp>
 #include <boost/mpl/lambda.hpp>
@@ -39,98 +40,13 @@
 #include <boost/variant/static_visitor.hpp>
 #include <boost/variant/variant.hpp>
 
+#include <type_traits>
+#include <vector>
+
 namespace cocaine {
 
-template<class Tag> class dispatch;
-
-namespace io {
-
-class rpc_t;
-
-class basic_dispatch_t {
-    // The name of the service which this protocol implementation belongs to. Mostly used for logs,
-    // and for synchronization stuff in the Locator Service.
-    const std::string m_name;
-
-public:
-    explicit
-    basic_dispatch_t(const std::string& name);
-
-    virtual
-   ~basic_dispatch_t();
-
-    // Concrete protocol transition as opposed to transition description in protocol graphs. It can
-    // either be some new dispatch pointer, an uninitialized pointer - terminal transition, or just
-    // an empty optional - recurrent transition (i.e. no transition at all).
-
-    virtual
-    auto
-    process(int id, const rpc_t& rpc) const -> boost::optional<dispatch_ptr_t> = 0;
-
-    // Observers
-
-    auto
-    name() const -> std::string;
-
-    virtual
-    auto
-    root() const -> const graph_root_t& = 0;
-
-    virtual
-    auto
-    version() const -> unsigned int = 0;
-
-    // Called on abnormal transport destruction. The idea's if the client disconnects unexpectedly,
-    // i.e. not reaching the end of the dispatch graph, then some special handling might be needed.
-    // Think 'zookeeper ephemeral nodes'.
-
-    virtual
-    void
-    discard(const std::error_code& ec) const;
-};
-
-// Slot invocation with arguments provided as a MessagePack object
-
-class rpc_t:
-    public boost::static_visitor<boost::optional<dispatch_ptr_t>>
-{
-    const msgpack::object& unpacked;
-    const upstream_ptr_t&  upstream;
-
-public:
-    rpc_t(const msgpack::object& unpacked_, const upstream_ptr_t& upstream_):
-        unpacked(unpacked_),
-        upstream(upstream_)
-    { }
-
-    template<class Event>
-    result_type
-    operator()(const std::shared_ptr<basic_slot<Event>>& slot) const;
-};
-
-template<class Event>
-rpc_t::result_type
-rpc_t::operator()(const std::shared_ptr<basic_slot<Event>>& slot) const {
-    typedef basic_slot<Event> slot_type;
-
-    // Unpacked arguments storage.
-    typename slot_type::tuple_type args;
-
-    try {
-        // NOTE: Unpacks the object into a tuple using the argument typelist unlike using plain
-        // tuple type traits, in order to support parameter tags, like optional<T>.
-        type_traits<typename event_traits<Event>::argument_type>::unpack(unpacked, args);
-    } catch(const msgpack::type_error& e) {
-        throw std::system_error(error::invalid_argument, e.what());
-    }
-
-    // Call the slot with the upstream constrained with the event's upstream protocol type tag.
-    return result_type((*slot)(std::move(args), typename slot_type::upstream_type(upstream)));
-}
-
-} // namespace io
-
-namespace mpl = boost::mpl;
+template<typename Event, typename = std::tuple<>>
+struct slot_builder;
 
 template<class Tag>
 class dispatch:
@@ -140,12 +56,11 @@ class dispatch:
 
     // Slot construction
 
-    typedef mpl::lambda<
-        std::shared_ptr<io::basic_slot<mpl::_1>>> slot_ptr;
-
-    typedef typename mpl::transform<
+    typedef typename boost::mpl::transform<
         typename io::messages<Tag>::type,
-        slot_ptr
+        typename boost::mpl::lambda<
+            std::shared_ptr<io::basic_slot<boost::mpl::_1>>
+        >::type
     >::type slot_types;
 
     typedef std::map<
@@ -158,24 +73,24 @@ class dispatch:
     // Slot traits
 
     template<class T, class Event>
-    struct is_slot:
-        public std::false_type
-    { };
+    struct is_slot: public std::false_type {};
 
     template<class T, class Event>
-    struct is_slot<std::shared_ptr<T>, Event>:
-        public std::is_base_of<io::basic_slot<Event>, T>
-    { };
+    struct is_slot<std::shared_ptr<T>, Event>: public std::is_base_of<io::basic_slot<Event>, T> {};
 
 public:
     explicit
     dispatch(const std::string& name):
         basic_dispatch_t(name)
-    { }
+    {}
+
+    template<class Event>
+    slot_builder<Event>
+    on();
 
     template<class Event, class F>
-    dispatch&
-    on(const F& callable, typename boost::disable_if<is_slot<F, Event>>::type* = nullptr);
+    dispatch<Tag>&
+    on(F&& fn, typename boost::disable_if<is_slot<F, Event>>::type* = 0);
 
     template<class Event>
     dispatch&
@@ -186,12 +101,12 @@ public:
     drop();
 
     void
-    halt() { m_slots->clear(); }
+    halt();
 
 public:
     virtual
-    auto
-    process(int id, const io::rpc_t& rpc) const -> boost::optional<io::dispatch_ptr_t>;
+    boost::optional<io::dispatch_ptr_t>
+    process(const io::decoder_t::message_type& message, const io::upstream_ptr_t& upstream);
 
     virtual
     auto
@@ -201,7 +116,7 @@ public:
 
     virtual
     auto
-    version() const -> unsigned int {
+    version() const -> int {
         return io::protocol<Tag>::version::value;
     }
 
@@ -209,7 +124,7 @@ public:
 
     template<class Visitor>
     auto
-    process(int id, const Visitor& visitor) const -> typename Visitor::result_type;
+    process(int id, const Visitor& visitor) -> typename Visitor::result_type;
 };
 
 template<class Tag>
@@ -219,35 +134,196 @@ namespace aux {
 
 // Slot selection
 
-template<class R, class Event>
+template<class R, class Event, class ForwardMeta>
 struct select {
-    typedef io::blocking_slot<Event> type;
+    typedef io::blocking_slot<Event, ForwardMeta> type;
 };
 
-template<class R, class Event>
-struct select<deferred<R>, Event> {
-    typedef io::deferred_slot<deferred, Event> type;
+template<class R, class Event, class ForwardMeta>
+struct select<deferred<R>, Event, ForwardMeta> {
+    typedef io::deferred_slot<deferred, Event, ForwardMeta> type;
 };
 
-template<class R, class Event>
-struct select<streamed<R>, Event> {
-    typedef io::deferred_slot<streamed, Event> type;
+template<class R, class Event, class ForwardMeta>
+struct select<streamed<R>, Event, ForwardMeta> {
+    typedef io::deferred_slot<streamed, Event, ForwardMeta> type;
+};
+
+template<class Event, class ForwardMeta>
+struct select<typename io::basic_slot<Event>::result_type, Event, ForwardMeta> {
+    typedef io::generic_slot<Event> type;
+};
+
+// Slot invocation with arguments provided as a MessagePack object
+
+struct calling_visitor_t:
+    public boost::static_visitor<boost::optional<io::dispatch_ptr_t>>
+{
+    calling_visitor_t(const std::vector<hpack::header_t>& headers_,
+                      const msgpack::object& unpacked_,
+                      const io::upstream_ptr_t& upstream_):
+        headers(headers_),
+        unpacked(unpacked_),
+        upstream(upstream_)
+    { }
+
+    template<class Event>
+    result_type
+    operator()(const std::shared_ptr<io::basic_slot<Event>>& slot) const {
+        typedef io::basic_slot<Event> slot_type;
+
+        // Unpacked arguments storage.
+        typename slot_type::tuple_type args;
+
+        try {
+            // NOTE: Unpacks the object into a tuple using the argument typelist unlike using plain
+            // tuple type traits, in order to support parameter tags, like optional<T>.
+            io::type_traits<typename io::event_traits<Event>::argument_type>::unpack(unpacked, args);
+        } catch(const msgpack::type_error& e) {
+            throw std::system_error(error::invalid_argument, e.what());
+        }
+
+        // Call the slot with the upstream constrained with the event's upstream protocol type tag.
+        return result_type((*slot)(headers, std::move(args), typename slot_type::upstream_type(upstream)));
+    }
+
+private:
+    const std::vector<hpack::header_t>& headers;
+    const msgpack::object& unpacked;
+    const io::upstream_ptr_t& upstream;
+};
+
+/// Wraps the given slot of type `F` eating meta argument depending on `MetaFlag`.
+template<typename F>
+struct slot_wrapper {
+    F fn;
+
+    explicit
+    slot_wrapper(F fn) :
+        fn(std::move(fn))
+    {}
+
+    template<typename... Args>
+    auto operator()(const hpack::headers_t& headers, Args&&... args) ->
+        decltype(fn(headers, std::forward<Args>(args)...))
+    {
+        return fn(headers, std::forward<Args>(args)...);
+    }
+};
+
+/// A callable that wraps another callable with the given middleware, making it possible to build
+/// execution chains.
+template<typename M, typename C, typename Event, typename R>
+struct compose {
+    // Middleware callable.
+    M middleware;
+
+    // Either the next composed middleware or slot.
+    C next;
+
+    compose(M middleware, C next) :
+        middleware(std::move(middleware)),
+        next(std::move(next))
+    {}
+
+    template<typename... Args>
+    auto operator()(Args&&... args) -> R {
+        return middleware(std::move(next), Event(), std::forward<Args>(args)...);
+    }
+};
+
+/// Wraps the given callable with the specified middleware, making it possible to build execution
+/// chains.
+template<typename F, typename Event, typename R, typename M>
+auto
+make_composed(M middleware, F fn) -> compose<M, F, Event, R> {
+    return compose<M, F, Event, R>{std::move(middleware), std::move(fn)};
+}
+
+template<typename, typename, typename>
+struct composer;
+
+template<typename Event, typename R>
+struct composer<std::tuple<>, Event, R> {
+    using slot_type = typename aux::select<R, Event, std::true_type>::type;
+
+    template<typename Dispatch, typename F>
+    static
+    auto
+    apply(Dispatch& dispatch, F fn, std::tuple<>) -> void {
+        dispatch.template on<Event>(std::make_shared<slot_type>(std::move(fn)));
+    }
+};
+
+template<typename H, typename... T, typename Event, typename R>
+struct composer<std::tuple<H, T...>, Event, R> {
+    template<typename Dispatch, typename F>
+    static
+    auto
+    apply(Dispatch& dispatch, F fn, std::tuple<H, T...> middlewares) -> void {
+        auto composed = make_composed<F, Event, R>(
+            std::move(std::get<0>(middlewares)),
+            std::move(fn)
+        );
+
+        composer<std::tuple<T...>, Event, R>::apply(
+            dispatch,
+            std::move(composed),
+            tuple::pop_front(std::move(middlewares))
+        );
+    }
 };
 
 } // namespace aux
 
-template<class Tag> template<class Event, class F>
+template<typename Event, typename... M>
+struct slot_builder<Event, std::tuple<M...>> {
+    typedef Event event_type;
+    typedef typename event_type::tag tag_type;
+
+    cocaine::dispatch<tag_type>& dispatch;
+    std::tuple<M...> middlewares;
+
+    /// Specifies a new middleware, that will be called both before any further registered
+    /// middlewares and event handlers.
+    ///
+    /// \param middleware Middleware that accepts a next callable, event and additional parameters
+    ///     that are required to process the event.
+    template<typename T>
+    auto
+    with_middleware(T middleware) && -> slot_builder<Event, std::tuple<T, M...>> {
+        return {dispatch, std::tuple_cat(std::make_tuple(middleware), middlewares)};
+    }
+
+    /// Consumes this builder, setting the event handler.
+    ///
+    /// \param fn Event handler which will be invoked each time a new event comes.
+    template<typename F>
+    auto
+    execute(F fn) && -> void {
+        aux::composer<std::tuple<M...>, Event, typename result_of<F>::type>::apply(
+            dispatch,
+            std::move(fn),
+            std::move(middlewares)
+        );
+    }
+};
+
+template<class Tag>
+template<class Event, class F>
 dispatch<Tag>&
-dispatch<Tag>::on(const F& callable, typename boost::disable_if<is_slot<F, Event>>::type*) {
+dispatch<Tag>::on(F&& fn, typename boost::disable_if<is_slot<F, Event>>::type*) {
     typedef typename aux::select<
         typename result_of<F>::type,
-        Event
+        Event,
+        std::false_type
     >::type slot_type;
 
-    return on<Event>(std::make_shared<slot_type>(callable));
+    return on<Event>(std::make_shared<slot_type>(std::forward<F>(fn)));
 }
 
-template<class Tag> template<class Event>
+template<class Tag>
+template<class Event>
 dispatch<Tag>&
 dispatch<Tag>::on(const std::shared_ptr<io::basic_slot<Event>>& ptr) {
     typedef io::event_traits<Event> traits;
@@ -259,7 +335,15 @@ dispatch<Tag>::on(const std::shared_ptr<io::basic_slot<Event>>& ptr) {
     return *this;
 }
 
-template<class Tag> template<class Event>
+template<class Tag>
+template<class Event>
+slot_builder<Event>
+dispatch<Tag>::on() {
+    return slot_builder<Event>{*this, std::make_tuple()};
+}
+
+template<class Tag>
+template<class Event>
 void
 dispatch<Tag>::drop() {
     if(!m_slots->erase(io::event_traits<Event>::id)) {
@@ -268,14 +352,21 @@ dispatch<Tag>::drop() {
 }
 
 template<class Tag>
-boost::optional<io::dispatch_ptr_t>
-dispatch<Tag>::process(int id, const io::rpc_t& rpc) const {
-    return process<io::rpc_t>(id, rpc);
+void
+dispatch<Tag>::halt() {
+    m_slots->clear();
 }
 
-template<class Tag> template<class Visitor>
+template<class Tag>
+boost::optional<io::dispatch_ptr_t>
+dispatch<Tag>::process(const io::decoder_t::message_type& message, const io::upstream_ptr_t& upstream) {
+    return process(message.type(), aux::calling_visitor_t(message.headers(), message.args(), upstream));
+}
+
+template<class Tag>
+template<class Visitor>
 typename Visitor::result_type
-dispatch<Tag>::process(int id, const Visitor& visitor) const {
+dispatch<Tag>::process(int id, const Visitor& visitor) {
     typedef typename slot_map_t::mapped_type slot_ptr_type;
 
     const auto slot = m_slots.apply([&](const slot_map_t& mapping) -> slot_ptr_type {

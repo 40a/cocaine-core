@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -21,10 +21,10 @@
 #ifndef COCAINE_TYPELIST_SERIALIZATION_TRAITS_HPP
 #define COCAINE_TYPELIST_SERIALIZATION_TRAITS_HPP
 
-#include "cocaine/traits.hpp"
-
-#include "cocaine/platform.hpp"
+#include "cocaine/common.hpp"
+#include "cocaine/format.hpp"
 #include "cocaine/rpc/tags.hpp"
+#include "cocaine/traits.hpp"
 
 #include <tuple>
 
@@ -130,15 +130,15 @@ struct sequence_type_error:
 struct sequence_size_error:
     public msgpack::type_error
 {
-    sequence_size_error(size_t actual, size_t target): message(cocaine::format(
-        "sequence size mismatch - expected at least %d element(s), got %d",
-        target,
-        actual))
+    sequence_size_error(size_t size, size_t minimal):
+        message(cocaine::format("sequence size mismatch - got {} element(s), expected at least {}",
+            size, minimal
+        ))
     { }
 
     virtual
    ~sequence_size_error() throw() {
-        // Empty. Required because of the mandatory throw() specification.
+        // Empty.
     }
 
     virtual
@@ -162,12 +162,10 @@ struct type_traits<
 >
 {
     enum constants: unsigned {
-
-    minimal = boost::mpl::count_if<
-        T,
-        boost::mpl::lambda<details::is_required<boost::mpl::_1>>
-    >::value
-
+        minimal = boost::mpl::count_if<
+            T,
+            boost::mpl::lambda<details::is_required<boost::mpl::_1>>
+        >::value
     };
 
 public:
@@ -331,7 +329,7 @@ struct type_traits<std::tuple<Args...>> {
 template<typename T, typename U>
 struct type_traits<std::pair<T, U>>: public type_traits<std::tuple<T, U>> { };
 #else
-// Workaround for libraries which violate the standard.
+// Workaround for libraries, that violates the standard.
 template<typename T, typename U>
 struct type_traits<std::pair<T, U>> {
     typedef typename itemize<T, U>::type sequence_type;

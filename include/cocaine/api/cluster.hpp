@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -22,7 +22,6 @@
 #define COCAINE_CLUSTER_API_HPP
 
 #include "cocaine/common.hpp"
-#include "cocaine/repository.hpp"
 
 #include <asio/ip/tcp.hpp>
 
@@ -30,6 +29,11 @@ namespace cocaine { namespace api {
 
 struct cluster_t {
     typedef cluster_t category_type;
+
+    enum class mode_t {
+        full,
+        announce_only
+    };
 
     struct interface {
         virtual
@@ -55,31 +59,12 @@ struct cluster_t {
     }
 
 protected:
-    cluster_t(context_t&, interface&, const std::string& /* name */, const dynamic_t& /* args */) {
+    cluster_t(context_t&, interface&, mode_t /* mode */ , const std::string& /* name */, const dynamic_t& /* args */) {
         // Empty.
     }
 };
 
-template<>
-struct category_traits<cluster_t> {
-    typedef std::unique_ptr<cluster_t> ptr_type;
-    typedef cluster_t::interface interface;
-
-    struct factory_type: public basic_factory<cluster_t> {
-        virtual
-        ptr_type
-        get(context_t& context, interface& locator, const std::string& name, const dynamic_t& args) = 0;
-    };
-
-    template<class T>
-    struct default_factory: public factory_type {
-        virtual
-        ptr_type
-        get(context_t& context, interface& locator, const std::string& name, const dynamic_t& args) {
-            return ptr_type(new T(context, locator, name, args));
-        }
-    };
-};
+typedef std::unique_ptr<cluster_t> cluster_ptr;
 
 }} // namespace cocaine::api
 

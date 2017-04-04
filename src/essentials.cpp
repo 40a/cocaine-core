@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -27,9 +27,26 @@
 #include "cocaine/detail/service/logging.hpp"
 #include "cocaine/detail/service/storage.hpp"
 #include "cocaine/detail/storage/files.hpp"
+#include "cocaine/repository/authentication.hpp"
+#include "cocaine/repository/authorization.hpp"
+#include "cocaine/repository/cluster.hpp"
+#include "cocaine/repository/gateway.hpp"
+#include "cocaine/repository/service.hpp"
+#include "cocaine/repository/storage.hpp"
+
+#include "authentication/promiscuous.hpp"
+#include "authorization/event.hpp"
+#include "authorization/storage.hpp"
+#include "authorization/unicorn.hpp"
 
 void
 cocaine::essentials::initialize(api::repository_t& repository) {
+    repository.insert<authentication::promiscuous_t>("promiscuous");
+    repository.insert<authorization::event::disabled_t>("disabled");
+    repository.insert<authorization::event::enabled_t>("event");
+    repository.insert<authorization::storage::disabled_t>("disabled");
+    repository.insert<authorization::storage::enabled_t>("storage");
+    repository.insert<authorization::unicorn::disabled_t>("disabled");
     repository.insert<cluster::multicast_t>("multicast");
     repository.insert<cluster::predefine_t>("predefine");
     repository.insert<gateway::adhoc_t>("adhoc");

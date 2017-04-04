@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -22,8 +22,11 @@
 #define COCAINE_PRIMITIVE_SERVICE_INTERFACE_HPP
 
 #include "cocaine/rpc/protocol.hpp"
+#include "cocaine/rpc/tags.hpp"
 
 #include <boost/mpl/is_sequence.hpp>
+
+#include <system_error>
 
 namespace cocaine { namespace io {
 
@@ -32,10 +35,8 @@ namespace cocaine { namespace io {
 template<class T>
 struct primitive {
 
-static_assert(
-    boost::mpl::is_sequence<T>::value,
-    "primitive protocol template argument must be a type sequence"
-);
+static_assert(boost::mpl::is_sequence<T>::value,
+    "primitive protocol template argument must be a type sequence");
 
 struct value {
     typedef primitive_tag<T> tag;
@@ -82,6 +83,7 @@ struct protocol<primitive_tag<T>> {
     >::type messages;
 
     typedef primitive<T> scope;
+    typedef primitive_tag<T> transition_type;
 };
 
 }} // namespace cocaine::io

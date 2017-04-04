@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -23,6 +23,7 @@
 
 #include "cocaine/api/service.hpp"
 
+#include "cocaine/idl/context.hpp"
 #include "cocaine/idl/logging.hpp"
 #include "cocaine/rpc/dispatch.hpp"
 
@@ -32,20 +33,21 @@ class logging_t:
     public api::service_t,
     public dispatch<io::log_tag>
 {
+    logging::priorities verbosity;
     std::unique_ptr<logging::logger_t> logger;
-    std::unique_ptr<logging::log_t>    wrapper;
+    std::shared_ptr<dispatch<io::context_tag>> signals;
 
 public:
     logging_t(context_t& context, asio::io_service& asio, const std::string& name, const dynamic_t& args);
 
     virtual
     auto
-    prototype() const -> const io::basic_dispatch_t&;
+    prototype() -> io::basic_dispatch_t&;
 
 private:
     void
     on_emit(logging::priorities level, std::string source, std::string message,
-            blackhole::attribute::set_t attributes);
+        blackhole::attributes_t attributes);
 
     auto
     on_verbosity() const -> logging::priorities;

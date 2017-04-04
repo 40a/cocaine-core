@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -79,13 +79,36 @@ struct pristine {
 // Result-of type deduction
 
 template<class F, class = void>
-struct result_of {
-    typedef decltype(std::declval<F>()) type;
-};
+struct result_of : public result_of<decltype(&std::remove_reference<F>::type::operator())> {};
 
 template<class F>
 struct result_of<F, typename depend<typename F::result_type>::type> {
     typedef typename F::result_type type;
+};
+
+template<class R, class... Args>
+struct result_of<R(Args...), void> {
+    typedef R type;
+};
+
+template<class R, class... Args>
+struct result_of<R(Args...) const, void> {
+    typedef R type;
+};
+
+template<class R, class... Args>
+struct result_of<R(*)(Args...), void> {
+    typedef R type;
+};
+
+template<class C, class R, class... Args>
+struct result_of<R(C::*)(Args...), void> {
+    typedef R type;
+};
+
+template<class C, class R, class... Args>
+struct result_of<R(C::*)(Args...) const, void> {
+    typedef R type;
 };
 
 // Constant index sequences

@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -23,6 +23,7 @@
 
 #include "cocaine/common.hpp"
 
+#include <map>
 #include <random>
 
 namespace cocaine { namespace service {
@@ -58,7 +59,7 @@ struct continuum_t {
     typedef std::map<std::string, unsigned int> stored_type;
 
 public:
-    continuum_t(std::unique_ptr<logging::log_t> log, const stored_type& group);
+    continuum_t(std::unique_ptr<logging::logger_t> log, const stored_type& group);
 
     // Observers
 
@@ -73,7 +74,7 @@ public:
 
 private:
     // Shared to allow cloning of rg_map_t for routing group updates.
-    const std::shared_ptr<logging::log_t> m_log;
+    const std::shared_ptr<logging::logger_t> m_log;
 
     // The hashring.
     std::vector<element_t> m_elements;

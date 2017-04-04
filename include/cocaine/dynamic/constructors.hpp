@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2013-2015 Andrey Goryachev <andrey.goryachev@gmail.com>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2013-2014 Andrey Goryachev <andrey.goryachev@gmail.com>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -89,7 +89,11 @@ struct dynamic_constructor<
     static inline
     void
     convert(const From& from, dynamic_t::value_t& to) {
-        to = dynamic_t::int_t(from);
+        if (std::is_signed<typename std::underlying_type<From>::type>::value) {
+            to = dynamic_t::int_t(from);
+        } else {
+            to = dynamic_t::uint_t(from);
+        }
     }
 };
 
@@ -313,80 +317,56 @@ struct dynamic_constructor<dynamic_t::object_t> {
     }
 };
 
-template<>
-struct dynamic_constructor<std::map<std::string, dynamic_t>> {
+struct dynamic_map_constructor {
     static const bool enable = true;
 
-    template<class Object>
+    // helper to choose proper implementaion
+    template<class From>
+    using direct_conversion = std::is_same<typename std::decay<From>::type, std::map<std::string, dynamic_t>>;
+
+    // Optimization - if map is already of proper type - just copy/move it
+    template<class From>
     static inline
-    void
-    convert(Object&& from, dynamic_t::value_t& to) {
+    typename std::enable_if<direct_conversion<From>::value>::type
+    convert(From&& from, dynamic_t::value_t& to) {
         to = detail::dynamic::incomplete_wrapper<dynamic_t::object_t>();
-        boost::get<detail::dynamic::incomplete_wrapper<dynamic_t::object_t>>(to).set(std::forward<Object>(from));
+        boost::get<detail::dynamic::incomplete_wrapper<dynamic_t::object_t>>(to).set(std::forward<From>(from));
+    }
+
+    // General case
+    template<class From>
+    static inline
+    typename std::enable_if<!direct_conversion<From>::value>::type
+    convert(From&& from, dynamic_t::value_t& to) {
+        dynamic_constructor<dynamic_t::object_t>::convert(dynamic_t::object_t(), to);
+
+        auto& object = boost::get<detail::dynamic::incomplete_wrapper<dynamic_t::object_t>>(to).get();
+
+        for(auto it = from.begin(); it != from.end(); ++it) {
+            object.emplace(boost::lexical_cast<std::string>(it->first), std::move(it->second));
+        }
     }
 };
+
+template<class Key, class Value>
+struct dynamic_constructor<std::map<Key, Value>> : public dynamic_map_constructor
+{};
+
+template<class Key, class Value>
+struct dynamic_constructor<std::unordered_map<Key, Value>> : public dynamic_map_constructor
+{};
 
 template<class T>
-struct dynamic_constructor<
-    std::map<std::string, T>,
-    typename std::enable_if<!std::is_same<T, dynamic_t>::value>::type
->
-{
-    static const bool enable = true;
+struct dynamic_constructor<std::reference_wrapper<T>> {
+        static const bool enable = true;
 
-    static inline
-    void
-    convert(const std::map<std::string, T>& from, dynamic_t::value_t& to) {
-        dynamic_constructor<dynamic_t::object_t>::convert(dynamic_t::object_t(), to);
-
-        auto& object = boost::get<detail::dynamic::incomplete_wrapper<dynamic_t::object_t>>(to).get();
-
-        for(auto it = from.begin(); it != from.end(); ++it) {
-            object.insert(dynamic_t::object_t::value_type(it->first, it->second));
+        static inline
+        void
+        convert(std::reference_wrapper<T> from, dynamic_t::value_t& to) {
+            dynamic_constructor<typename std::remove_const<T>::type>::convert(from.get(), to);
         }
-    }
-
-    static inline
-    void
-    convert(std::map<std::string, T>&& from, dynamic_t::value_t& to) {
-        dynamic_constructor<dynamic_t::object_t>::convert(dynamic_t::object_t(), to);
-
-        auto& object = boost::get<detail::dynamic::incomplete_wrapper<dynamic_t::object_t>>(to).get();
-
-        for(auto it = from.begin(); it != from.end(); ++it) {
-            object.insert(dynamic_t::object_t::value_type(it->first, std::move(it->second)));
-        }
-    }
 };
 
-template<class T>
-struct dynamic_constructor<std::unordered_map<std::string, T>> {
-    static const bool enable = true;
-
-    static inline
-    void
-    convert(const std::unordered_map<std::string, T>& from, dynamic_t::value_t& to) {
-        dynamic_constructor<dynamic_t::object_t>::convert(dynamic_t::object_t(), to);
-
-        auto& object = boost::get<detail::dynamic::incomplete_wrapper<dynamic_t::object_t>>(to).get();
-
-        for(auto it = from.begin(); it != from.end(); ++it) {
-            object.insert(it->first, it->second);
-        }
-    }
-
-    static inline
-    void
-    convert(std::unordered_map<std::string, T>&& from, dynamic_t::value_t& to) {
-        dynamic_constructor<dynamic_t::object_t>::convert(dynamic_t::object_t(), to);
-
-        auto& object = boost::get<detail::dynamic::incomplete_wrapper<dynamic_t::object_t>>(to).get();
-
-        for(auto it = from.begin(); it != from.end(); ++it) {
-            object.insert(it->first, std::move(it->second));
-        }
-    }
-};
 
 } // namespace cocaine
 

@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -22,9 +22,7 @@
 #define COCAINE_GATEWAY_API_HPP
 
 #include "cocaine/common.hpp"
-
-#include "cocaine/locked_ptr.hpp"
-#include "cocaine/repository.hpp"
+#include "cocaine/rpc/graph.hpp"
 
 #include <asio/ip/tcp.hpp>
 
@@ -33,53 +31,76 @@ namespace cocaine { namespace api {
 struct gateway_t {
     typedef gateway_t category_type;
 
-    // Partition is a (service name, version) tuple. It is used to partition same service across
-    // cluster by version, i.e. keeping different versions of the same service protocol separate.
-    typedef std::tuple<std::string, unsigned int> partition_t;
+    // TODO: Possibly drop this structure in favor of `cocaine::quote_t`.
+    struct service_description_t {
+        std::vector<asio::ip::tcp::endpoint> endpoints;
+        io::graph_root_t protocol;
+        unsigned int version;
+    };
+
+    enum class resolve_policy_t {
+        full,
+        remote_only
+    };
 
     virtual
-   ~gateway_t() {
-        // Empty.
+    ~gateway_t() {
+     // Empty.
     }
+
+    /**
+     * This one tells the locator (or any other direct user of gateway) if the gateway resolves
+     * local services itself("full") or delegates resolving of local services to locator("remote_only").
+     */
+    virtual
+    auto
+    resolve_policy() const -> resolve_policy_t = 0;
 
     virtual
     auto
-    resolve(const partition_t& name) const -> std::vector<asio::ip::tcp::endpoint> = 0;
+    resolve(const std::string& name) const -> service_description_t = 0;
 
+    /**
+     * this is called when locator discovers new service (remote or local)
+     * local services can be distinguished by local_uuid parameter passed to ctor
+     */
     virtual
-    size_t
+    auto
     consume(const std::string& uuid,
-            const partition_t& name, const std::vector<asio::ip::tcp::endpoint>& endpoints) = 0;
+            const std::string& name,
+            unsigned int version,
+            const std::vector<asio::ip::tcp::endpoint>& endpoints,
+            const io::graph_root_t& protocol) -> void = 0;
 
+
+    /**
+     * cleanup only one specific service from concrete uuid
+     */
     virtual
-    size_t
-    cleanup(const std::string& uuid, const partition_t& name) = 0;
+    auto
+    cleanup(const std::string& uuid, const std::string& name) -> void = 0;
+
+    /**
+     * drop all services from uuid, typically it's called on node shutdown or disconnect
+     */
+    virtual
+    auto
+    cleanup(const std::string& uuid) -> void = 0;
+
+    /**
+     * count all services with specified name including local ones
+     */
+    virtual
+    auto
+    total_count(const std::string& name) const -> size_t = 0;
 
 protected:
-    gateway_t(context_t&, const std::string& /* name */, const dynamic_t& /* args */) {
+    gateway_t(context_t&, const std::string& /* local_uuid */, const std::string& /* name */, const dynamic_t& /* args */) {
         // Empty.
     }
 };
 
-template<>
-struct category_traits<gateway_t> {
-    typedef std::unique_ptr<gateway_t> ptr_type;
-
-    struct factory_type: public basic_factory<gateway_t> {
-        virtual
-        ptr_type
-        get(context_t& context, const std::string& name, const dynamic_t& args) = 0;
-    };
-
-    template<class T>
-    struct default_factory: public factory_type {
-        virtual
-        ptr_type
-        get(context_t& context, const std::string& name, const dynamic_t& args) {
-            return ptr_type(new T(context, name, args));
-        }
-    };
-};
+typedef std::unique_ptr<gateway_t> gateway_ptr;
 
 }} // namespace cocaine::api
 

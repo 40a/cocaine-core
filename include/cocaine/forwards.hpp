@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -21,22 +21,58 @@
 #ifndef COCAINE_FORWARDS_HPP
 #define COCAINE_FORWARDS_HPP
 
-#include <blackhole/forwards.hpp>
+#include <memory>
+#include <vector>
+
+// Third-party forwards
+
+namespace asio {
+
+class io_service;
+
+} // namespace asio
+
+namespace blackhole {
+inline namespace v1 {
+
+class logger_t;
+class severity_t;
+
+}  // namespace v1
+}  // namespace blackhole
+
+namespace metrics {
+
+class registry_t;
+
+}  // namespace metrics
 
 namespace cocaine {
 
+class actor_t;
+struct config_t;
 class context_t;
+class dynamic_t;
+class execution_unit_t;
+class port_mapping_t;
+class session_t;
+class trace_t;
+class filter_t;
 
 template<class> class dispatch;
 template<class> class upstream;
-
-class dynamic_t;
+template<class> class retroactive_signal;
 
 typedef unsigned short port_t;
 
 } // namespace cocaine
 
 namespace cocaine { namespace api {
+
+class authentication_t;
+class repository_t;
+class unicorn_t;
+class unicorn_scope_t;
 
 struct cluster_t;
 struct gateway_t;
@@ -46,7 +82,40 @@ struct storage_t;
 
 }} // namespace cocaine::api
 
+namespace cocaine { namespace auth {
+
+class identity_t;
+
+}} // namespace cocaine::auth
+
+namespace cocaine { namespace authorization {
+
+class event_t;
+class unicorn_t;
+class storage_t;
+
+}} // namespace cocaine::authorization
+
+namespace cocaine { namespace context {
+
+struct quote_t;
+
+}} // namespace cocanie::context
+
+namespace cocaine { namespace hpack {
+
+class header_t;
+struct headers;
+struct header_static_table;
+
+typedef std::vector<header_t> header_storage_t;
+
+}} // namespace cocaine::hpack
+
 namespace cocaine { namespace io {
+
+// Used for context signals.
+struct context_tag;
 
 // I/O threads
 
@@ -73,13 +142,20 @@ struct transport;
 class basic_dispatch_t;
 class basic_upstream_t;
 
-typedef std::shared_ptr<const basic_dispatch_t> dispatch_ptr_t;
-typedef std::shared_ptr<      basic_upstream_t> upstream_ptr_t;
+typedef std::shared_ptr<basic_dispatch_t> dispatch_ptr_t;
+typedef std::shared_ptr<basic_upstream_t> upstream_ptr_t;
 
 template<class>
 struct protocol;
 
 }} // namespace cocaine::io
+
+namespace cocaine { namespace io { namespace aux {
+
+struct decoded_message_t;
+struct encoded_message_t;
+
+}}} // namespace cocaine::io::aux
 
 namespace cocaine { namespace logging {
 
@@ -90,22 +166,15 @@ enum priorities: int {
     error   =  3
 };
 
-template<class Wrapped, class AttributeFetcher>
-class dynamic_wrapper;
-
-struct trace_attribute_fetcher_t;
-
-typedef blackhole::verbose_logger_t<logging::priorities> logger_t;
-typedef dynamic_wrapper<logger_t, trace_attribute_fetcher_t> log_t;
+// Import the logger in our namespace.
+using blackhole::logger_t;
 
 }} // namespace cocaine::logging
 
-// Third-party forwards
+namespace cocaine { namespace unicorn {
 
-namespace asio {
+class versioned_value_t;
 
-class io_service;
-
-} // namespace asio
+}} // namespace cocaine::unicorn
 
 #endif

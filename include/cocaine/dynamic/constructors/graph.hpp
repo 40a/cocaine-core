@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2017+ Anton Matveenko <antmat@me.com>
+    Copyright (c) 2017+ Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -18,23 +18,15 @@
     along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "cocaine/api/storage.hpp"
+#pragma once
 
-#include "cocaine/context.hpp"
+#include "cocaine/dynamic/constructors.hpp"
+#include "cocaine/dynamic/constructors/optional.hpp"
+#include "cocaine/rpc/graph.hpp"
 
-namespace cocaine { namespace api {
+namespace cocaine {
 
-// Storage
+template<>
+struct dynamic_constructor<io::graph_node_t>: public dynamic_constructor<io::aux::recursion_base_t> {};
 
-category_traits<storage_t>::ptr_type
-storage(context_t& context, const std::string& name) {
-    auto it = context.config.storages.find(name);
-
-    if(it == context.config.storages.end()) {
-        throw std::system_error(std::make_error_code(std::errc::argument_out_of_domain), name);
-    }
-
-    return context.get<storage_t>(it->second.type, context, name, it->second.args);
-}
-
-}} // namespace cocaine::api
+} // namespace cocaine

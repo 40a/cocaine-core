@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -22,17 +22,22 @@
 #define COCAINE_EXCEPTIONS_HPP
 
 #include "cocaine/format.hpp"
-#include "cocaine/locked_ptr.hpp"
 
+#include <memory>
 #include <system_error>
 
 namespace cocaine { namespace error {
 
 enum transport_errors {
     frame_format_error = 1,
+    // TODO: maybe this should belong to protocol error, but it's here for backward compatibility
     hpack_error,
     insufficient_bytes,
     parse_error
+};
+
+enum protocol_errors {
+    closed_upstream = 1
 };
 
 enum dispatch_errors {
@@ -50,16 +55,42 @@ enum repository_errors {
     duplicate_component,
     initialization_error,
     invalid_interface,
-    ltdl_error,
-    version_mismatch
+    dlopen_error,
+    version_mismatch,
+    component_not_registered
 };
 
 enum security_errors {
-    token_not_found = 1
+    token_not_found = 1,
+    unauthorized,
+    permission_denied,
+    permissions_changed,
+    invalid_acl_framing
+};
+
+enum locator_errors {
+    service_not_available = 1,
+    routing_storage_error,
+    missing_version_error,
+    gateway_duplicate_service,
+    gateway_missing_service
+};
+
+enum unicorn_errors {
+    child_not_allowed = 1,
+    invalid_type,
+    invalid_value,
+    unknown_error,
+    invalid_node_name,
+    invalid_path,
+    version_not_allowed
 };
 
 auto
 make_error_code(transport_errors code) -> std::error_code;
+
+auto
+make_error_code(protocol_errors code) -> std::error_code;
 
 auto
 make_error_code(dispatch_errors code) -> std::error_code;
@@ -69,6 +100,12 @@ make_error_code(repository_errors code) -> std::error_code;
 
 auto
 make_error_code(security_errors code) -> std::error_code;
+
+auto
+make_error_code(locator_errors code) -> std::error_code;
+
+auto
+make_error_code(unicorn_errors code) -> std::error_code;
 
 // Error categories registrar
 
@@ -87,11 +124,13 @@ struct registrar {
     auto
     add(const std::error_category& ec) -> size_t;
 
-private:
-    struct impl_type;
-
     static
-    synchronized<std::unique_ptr<impl_type>> ptr;
+    auto
+    add(const std::error_category& ec, size_t index) -> void;
+
+private:
+    class storage_type;
+    static auto instance() -> storage_type&;
 };
 
 // Generic exception
@@ -109,8 +148,8 @@ struct error_t:
     template<class E, class... Args,
              class = typename std::enable_if<std::is_error_code_enum<E>::value ||
                                              std::is_error_condition_enum<E>::value>::type>
-    error_t(const E error_id, const std::string& e, const Args&... args):
-        std::system_error(make_error_code(error_id), cocaine::format(e, args...))
+    error_t(const E err, const std::string& e, const Args&... args):
+        std::system_error(make_error_code(err), cocaine::format(e, args...))
     { }
 };
 
@@ -132,6 +171,11 @@ struct is_error_code_enum<cocaine::error::transport_errors>:
 { };
 
 template<>
+struct is_error_code_enum<cocaine::error::protocol_errors>:
+    public true_type
+{ };
+
+template<>
 struct is_error_code_enum<cocaine::error::dispatch_errors>:
     public true_type
 { };
@@ -143,6 +187,17 @@ struct is_error_code_enum<cocaine::error::repository_errors>:
 
 template<>
 struct is_error_code_enum<cocaine::error::security_errors>:
+    public true_type
+{ };
+
+template<>
+struct is_error_code_enum<cocaine::error::locator_errors>:
+public true_type
+{ };
+
+
+template<>
+struct is_error_code_enum<cocaine::error::unicorn_errors>:
     public true_type
 { };
 

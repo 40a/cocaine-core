@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -22,21 +22,25 @@
 
 
 #include "cocaine/context.hpp"
+#include "cocaine/context/signal.hpp"
+#include "cocaine/dynamic.hpp"
 #include "cocaine/logging.hpp"
-
+#include "cocaine/rpc/dispatch.hpp"
 #include "cocaine/traits/endpoint.hpp"
 #include "cocaine/traits/graph.hpp"
 #include "cocaine/traits/vector.hpp"
 
 #include <asio/io_service.hpp>
 
-#include <boost/range/adaptor/transformed.hpp>
+#include <blackhole/logger.hpp>
 
 using namespace cocaine::io;
 using namespace cocaine::cluster;
 
 using namespace asio;
 using namespace asio::ip;
+
+using blackhole::attribute_list;
 
 namespace cocaine {
 
@@ -53,7 +57,9 @@ struct dynamic_converter<predefine_cfg_t> {
 
         const dynamic_t& nodes = source.as_object().at("nodes", dynamic_t::empty_object);
 
-        if(nodes.as_object().empty()) throw cocaine::error_t("no nodes have been specified");
+        if(nodes.as_object().empty()) {
+            throw cocaine::error_t("no nodes have been specified");
+        }
 
         io_service service;
 
@@ -65,11 +71,11 @@ struct dynamic_converter<predefine_cfg_t> {
 
             try {
                 it = resolver.resolve(tcp::resolver::query(
-                    // TODO(@kobolog): A better way to parse this.
+                    // TODO: A better way to parse this.
                     addr.substr(0, addr.rfind(":")), addr.substr(addr.rfind(":") + 1)
                 ));
             } catch(const std::system_error& e) {
-                throw std::system_error(e.code(), "unable to resolve static node endpoints");
+                throw std::system_error(e.code(), "unable to determine predefined node endpoints");
             }
 
             result.endpoints[node->first] = std::vector<tcp::endpoint>(it, end);
@@ -85,27 +91,19 @@ struct dynamic_converter<predefine_cfg_t> {
 
 } // namespace cocaine
 
-predefine_t::predefine_t(context_t& context, interface& locator, const std::string& name, const dynamic_t& args):
-    category_type(context, locator, name, args),
+predefine_t::predefine_t(context_t& context, interface& locator, mode_t mode, const std::string& name, const dynamic_t& args):
+    category_type(context, locator, mode, name, args),
     m_log(context.log(name)),
     m_locator(locator),
     m_cfg(args.to<predefine_cfg_t>()),
     m_timer(locator.asio())
 {
-    for(auto it = m_cfg.endpoints.begin(); it != m_cfg.endpoints.end(); ++it) {
-        const auto joined = boost::algorithm::join(
-            it->second | boost::adaptors::transformed(boost::lexical_cast<std::string, tcp::endpoint>),
-            ", ");
+    if(mode == mode_t::full) {
+        m_signals = std::make_shared<dispatch<context_tag>>(name);
+        m_signals->on<io::context::prepared>(std::bind(&predefine_t::on_announce, this, std::error_code()));
 
-        COCAINE_LOG_INFO(m_log, "resolved %d static node endpoint(s): %s", it->second.size(), joined)(
-            "uuid", it->first
-        );
+        context.signal_hub().listen(m_signals, m_locator.asio());
     }
-
-    m_signals = std::make_shared<dispatch<context_tag>>(name);
-    m_signals->on<context::prepared>(std::bind(&predefine_t::on_announce, this, std::error_code()));
-
-    context.listen(m_signals, m_locator.asio());
 }
 
 predefine_t::~predefine_t() {

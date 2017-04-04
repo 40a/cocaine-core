@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -23,106 +23,95 @@
 
 #include "cocaine/common.hpp"
 
-#include "cocaine/context/config.hpp"
-#include "cocaine/context/mapper.hpp"
-#include "cocaine/context/signal.hpp"
+#include <blackhole/attributes.hpp>
 
-#include "cocaine/idl/context.hpp"
+#include <boost/optional/optional_fwd.hpp>
 
-#include "cocaine/locked_ptr.hpp"
-#include "cocaine/repository.hpp"
-
-#include <blackhole/blackhole.hpp>
-
-#include <boost/optional.hpp>
+#include <map>
 
 namespace cocaine {
-
-class quote_t;
-class actor_t;
-
-class execution_unit_t;
 
 // Context
 
 class context_t {
-    COCAINE_DECLARE_NONCOPYABLE(context_t)
-
-    typedef std::deque<std::pair<std::string, std::unique_ptr<actor_t>>> service_list_t;
-
-    // The root log.
-    std::unique_ptr<logging::log_t> m_log;
-
-    // NOTE: This is the first object in the component tree, all the other dynamic components, be it
-    // storages or isolates, have to be declared after this one.
-    std::unique_ptr<api::repository_t> m_repository;
-
-    // A pool of execution units - threads responsible for doing all the service invocations.
-    std::vector<std::unique_ptr<execution_unit_t>> m_pool;
-
-    // Services are stored as a vector of pairs to preserve the initialization order. Synchronized,
-    // because services are allowed to start and stop other services during their lifetime.
-    synchronized<service_list_t> m_services;
-
-    // Context signalling hub.
-    synchronized<signal<io::context_tag>> m_signals;
-
 public:
-    const config_t config;
+    virtual
+    ~context_t() {}
 
-    // Service port mapping and pinning.
-    port_mapping_t mapper;
+    virtual
+    std::unique_ptr<logging::logger_t>
+    log(const std::string& source) = 0;
 
-public:
-    context_t(config_t config, std::unique_ptr<logging::log_t> log);
-   ~context_t();
+    virtual
+    std::unique_ptr<logging::logger_t>
+    log(const std::string& source, blackhole::attributes_t attributes) = 0;
 
-    std::unique_ptr<logging::log_t>
-    log(const std::string& source, blackhole::attribute::set_t = blackhole::attribute::set_t());
+    virtual
+    void
+    logger_filter(filter_t new_filter) = 0;
 
-    template<class Category, class... Args>
-    typename api::category_traits<Category>::ptr_type
-    get(const std::string& type, Args&&... args) const;
+    virtual
+    api::repository_t&
+    repository() const = 0;
+
+    virtual
+    retroactive_signal<io::context_tag>&
+    signal_hub() = 0;
+
+    virtual
+    metrics::registry_t&
+    metrics_hub() = 0;
+
+    virtual
+    const config_t&
+    config() const = 0;
+
+    virtual
+    port_mapping_t&
+    mapper() = 0;
 
     // Service API
-
+    virtual
     void
-    insert(const std::string& name, std::unique_ptr<actor_t> service);
+    insert(const std::string& name, std::unique_ptr<actor_t> service) = 0;
 
-    auto
-    remove(const std::string& name) -> std::unique_ptr<actor_t>;
-
-    auto
-    locate(const std::string& name) const -> boost::optional<quote_t>;
-
-    auto
-    snapshot() const -> std::map<std::string, quote_t>;
-
-    // Signals API
-
+    /// Inserts a new service into the context.
+    ///
+    /// This method atomically inserts a new service, which is initialized with the given callback.
+    /// The callback is not called if a service with such name already exists. This allows to avoid
+    /// unnecessary actor initialization, since there is no more ways to atomically
+    /// check-and-insert.
+    ///
+    /// \throws std::system_error if a service with the specified name already exists.
+    virtual
     void
-    listen(const std::shared_ptr<dispatch<io::context_tag>>& slot, asio::io_service& asio) {
-        m_signals->listen(slot, asio);
-    }
+    insert_with(const std::string& name, std::function<std::unique_ptr<actor_t>()> fn) = 0;
+
+    virtual
+    auto
+    remove(const std::string& name) -> std::unique_ptr<actor_t> = 0;
+
+    virtual
+    auto
+    locate(const std::string& name) const -> boost::optional<context::quote_t> = 0;
+
+    virtual
+    auto
+    snapshot() const -> std::map<std::string, context::quote_t> = 0;
 
     // Network I/O
-
+    virtual
     auto
-    engine() -> execution_unit_t&;
-
-private:
-    void
-    bootstrap();
-
-    void
-    terminate();
+    engine() -> execution_unit_t& = 0;
 };
 
-template<class Category, class... Args>
-typename api::category_traits<Category>::ptr_type
-context_t::get(const std::string& type, Args&&... args) const {
-    return m_repository->get<Category>(type, std::forward<Args>(args)...);
-}
+std::unique_ptr<context_t>
+make_context(std::unique_ptr<config_t> config, std::unique_ptr<logging::logger_t> log);
+
+std::unique_ptr<context_t>
+make_context(std::unique_ptr<config_t> config,
+             std::unique_ptr<logging::logger_t> log,
+             std::unique_ptr<api::repository_t> repository);
 
 } // namespace cocaine
 

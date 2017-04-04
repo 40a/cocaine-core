@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -22,6 +22,7 @@
 #define COCAINE_IO_BUFFERED_READABLE_STREAM_HPP
 
 #include "cocaine/errors.hpp"
+#include "cocaine/memory.hpp"
 
 #include <functional>
 

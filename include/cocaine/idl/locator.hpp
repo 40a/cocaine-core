@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -136,7 +136,7 @@ struct publish {
         std::string,
      /* External service endpoints. */
         std::vector<asio::ip::tcp::endpoint>,
-     /* Service info, if the external service is using native protocol. */
+     /* Service metadata, if the external service is using native protocol. */
         optional<std::tuple<unsigned int, graph_root_t>>
     >::type argument_type;
 };
@@ -215,27 +215,5 @@ struct protocol<locator::routing_tag> {
 };
 
 }} // namespace cocaine::io
-
-namespace cocaine { namespace error {
-
-enum locator_errors {
-    service_not_available = 1,
-    routing_storage_error,
-    missing_version_error
-};
-
-auto
-make_error_code(locator_errors code) -> std::error_code;
-
-}} // namespace cocaine::error
-
-namespace std {
-
-template<>
-struct is_error_code_enum<cocaine::error::locator_errors>:
-    public true_type
-{ };
-
-} // namespace std
 
 #endif

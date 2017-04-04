@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -49,7 +49,7 @@ class multicast_t:
 
     context_t& m_context;
 
-    const std::unique_ptr<logging::log_t> m_log;
+    const std::unique_ptr<logging::logger_t> m_log;
 
     // Interoperability with the locator service.
     interface& m_locator;
@@ -67,7 +67,7 @@ class multicast_t:
     std::shared_ptr<dispatch<io::context_tag>> m_signals;
 
 public:
-    multicast_t(context_t& context, interface& locator, const std::string& name, const dynamic_t& args);
+    multicast_t(context_t& context, interface& locator, mode_t mode, const std::string& name, const dynamic_t& args);
 
     virtual
    ~multicast_t();

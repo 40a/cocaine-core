@@ -1,6 +1,7 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2013-2016 Evgeny Safronov <division494@gmail.com>
+    Copyright (c) 2011-2016 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -20,40 +21,78 @@
 
 #include "cocaine/detail/service/logging.hpp"
 
-#include "cocaine/context.hpp"
-#include "cocaine/logging.hpp"
+#include <blackhole/attribute.hpp>
+#include <blackhole/attributes.hpp>
+#include <blackhole/config/json.hpp>
+#include <blackhole/extensions/facade.hpp>
+#include <blackhole/extensions/writer.hpp>
+#include <blackhole/formatter/json.hpp>
+#include <blackhole/logger.hpp>
+#include <blackhole/record.hpp>
+#include <blackhole/registry.hpp>
+#include <blackhole/root.hpp>
+#include <blackhole/sink/console.hpp>
+#include <blackhole/wrapper.hpp>
 
+#include "cocaine/context.hpp"
+#include "cocaine/context/config.hpp"
+#include "cocaine/context/signal.hpp"
+#include "cocaine/dynamic.hpp"
+#include "cocaine/logging.hpp"
 #include "cocaine/traits/attributes.hpp"
 #include "cocaine/traits/enum.hpp"
 #include "cocaine/traits/vector.hpp"
+
+#include <signal.h>
 
 using namespace cocaine;
 using namespace cocaine::logging;
 using namespace cocaine::service;
 
-using namespace blackhole;
-
 namespace ph = std::placeholders;
 
-logging_t::logging_t(context_t& context, asio::io_service& asio, const std::string& name, const dynamic_t& args):
+namespace {
+
+const std::string DEFAULT_BACKEND("core");
+
+}  // namespace
+
+logging_t::logging_t(context_t& context, asio::io_service& asio, const std::string& name, const dynamic_t& args) :
     category_type(context, asio, name, args),
-    dispatch<io::log_tag>(name)
+    dispatch<io::log_tag>(name),
+    verbosity(static_cast<priorities>(args.as_object().at("verbosity", priorities::debug).as_int())),
+    signals(std::make_shared<dispatch<io::context_tag>>(name))
 {
-    const auto backend = args.as_object().at("backend", "core").as_string();
-
-    if(backend != "core") {
-        try {
-            logger = std::make_unique<logger_t>(repository_t::instance().create<logger_t>(
-                backend,
-                context.config.logging.loggers.at(backend).verbosity
-            ));
-        } catch(const std::out_of_range& e) {
-            throw cocaine::error_t("logger '%s' is not configured", backend);
-        }
-
-        wrapper.reset(new log_t(*logger, {{"source", cocaine::format("%s/%s", name, backend)}}));
+    const auto backend = args.as_object().at("backend", DEFAULT_BACKEND).as_string();
+    // TODO (@esafronov v12.6): Using cache to allow resources reuse.
+    // logger = context.log(logging::name_t(backend), format("{}[core]", name), {});
+    if (backend == "core") {
+        logger = context.log(format("{}[core]", name));
     } else {
-        wrapper = context.log(cocaine::format("%s/core", name));
+        auto reset_logger_fn = [=, &context]() {
+            auto registry = blackhole::registry::configured();
+            registry->add<blackhole::formatter::json_t>();
+
+            std::stringstream stream;
+            stream << boost::lexical_cast<std::string>(context.config().logging().loggers());
+
+            auto log = registry->builder<blackhole::config::json_t>(stream)
+                .build(backend);
+
+            auto severity = context.config().logging().severity();
+            log.filter([=](const blackhole::record_t& record) -> bool {
+                return record.severity() >= severity || trace_t::current().verbose();
+            });
+
+            logger.reset(new blackhole::root_logger_t(std::move(log)));
+        };
+        reset_logger_fn();
+        signals->on<io::context::os_signal>([=](int signum, siginfo_t){
+            if(signum == SIGHUP) {
+                reset_logger_fn();
+            }
+        });
+        context.signal_hub().listen(signals, asio);
     }
 
     on<io::log::emit>(std::bind(&logging_t::on_emit, this, ph::_1, ph::_2, ph::_3, ph::_4));
@@ -61,27 +100,29 @@ logging_t::logging_t(context_t& context, asio::io_service& asio, const std::stri
 }
 
 auto
-logging_t::prototype() const -> const io::basic_dispatch_t& {
+logging_t::prototype() -> io::basic_dispatch_t& {
     return *this;
 }
 
 void
 logging_t::on_emit(logging::priorities level, std::string source, std::string message,
-                   attribute::set_t attributes)
+    blackhole::attributes_t attributes)
 {
-    auto record = wrapper->open_record(level, std::move(attributes));
-
-    if(!record) {
+    if (level < on_verbosity()) {
         return;
     }
 
-    record.insert(cocaine::logging::keyword::source() = std::move(source));
-    record.message(std::move(message));
+    blackhole::attribute_list list{{"source", source}};
+    for (const auto& attribute : attributes) {
+        list.emplace_back(attribute);
+    }
 
-    wrapper->push(std::move(record));
+    blackhole::attribute_pack pack{list};
+
+    logger->log(static_cast<int>(level), message, pack);
 }
 
 logging::priorities
 logging_t::on_verbosity() const {
-    return wrapper->log().verbosity();
+    return verbosity;
 }

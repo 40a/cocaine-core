@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -18,20 +18,28 @@
     along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "cocaine/logging.hpp"
+#include "cocaine/detail/logging.hpp"
 
 #include <cxxabi.h>
 
-namespace cocaine { namespace logging {
+#include <functional>
+#include <map>
+#include <memory>
+
+#include <boost/assert.hpp>
+
+#include "cocaine/format.hpp"
+
+namespace cocaine { namespace detail { namespace logging {
 
 std::string
 demangle(const std::string& mangled) {
-    auto custom_deleter = std::bind(&::free, std::placeholders::_1);
+    auto deleter = std::bind(&::free, std::placeholders::_1);
     auto status = 0;
 
-    std::unique_ptr<char[], decltype(custom_deleter)> buffer(
+    std::unique_ptr<char[], decltype(deleter)> buffer(
         abi::__cxa_demangle(mangled.c_str(), nullptr, nullptr, &status),
-        custom_deleter
+        deleter
     );
 
     static const std::map<int, std::string> errors = {
@@ -44,10 +52,10 @@ demangle(const std::string& mangled) {
     BOOST_ASSERT(errors.count(status));
 
     if(status != 0) {
-        return cocaine::format("unable to demangle '%s': %s", mangled, errors.at(status));
+        return cocaine::format("unable to demangle '{}': {}", mangled, errors.at(status));
     }
 
     return buffer.get();
 }
 
-}} // namespace cocaine::logging
+}}} // namespace cocaine::detail::logging

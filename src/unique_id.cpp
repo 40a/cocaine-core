@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -20,6 +20,8 @@
 
 #include "cocaine/unique_id.hpp"
 
+#include "cocaine/errors.hpp"
+
 #include <uuid/uuid.h>
 
 using namespace cocaine;
@@ -35,7 +37,7 @@ unique_id_t::unique_id_t(const std::string& other) {
     );
 
     if(rv != 0) {
-        throw cocaine::error_t("unable to parse '%s' as an unique id", other);
+        throw cocaine::error_t("unable to parse '{}' as an unique id", other);
     }
 }
 
@@ -49,13 +51,12 @@ unique_id_t::string() const {
         unparsed
     );
 
-    return unparsed;
+    return std::string(unparsed);
 }
 
 bool
 unique_id_t::operator==(const unique_id_t& other) const {
-    return uuid[0] == other.uuid[0] &&
-           uuid[1] == other.uuid[1];
+    return uuid == other.uuid;
 }
 
 namespace cocaine {

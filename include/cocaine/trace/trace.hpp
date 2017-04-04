@@ -23,7 +23,10 @@
 
 #include "cocaine/common.hpp"
 
-#include <boost/optional.hpp>
+#include <boost/optional/optional_fwd.hpp>
+
+#include <functional>
+#include <string>
 
 namespace cocaine {
 
@@ -52,10 +55,8 @@ public:
     /**
      * Construct trace with specified tuple of ids and service and rpc name.
      */
-    trace_t(uint64_t trace_id,
-            uint64_t span_id,
-            uint64_t parent_id,
-            const std::string& rpc_name);
+    trace_t(uint64_t id, uint64_t span, uint64_t parent, const std::string& name);
+    trace_t(uint64_t id, uint64_t span, uint64_t parent, bool verbose, const std::string& name);
 
     /**
      * Generate a new trace with specified service and rpc name.
@@ -80,6 +81,10 @@ public:
 
     uint64_t
     get_id() const;
+
+    /// Returns true if a tracebit was set, indicating that more verbose output is required.
+    bool
+    verbose() const;
 
     /**
      * Check if trace is empty (was not set via any of scope guards).
@@ -132,11 +137,6 @@ public:
     auto
     bind(Args&& ...args) -> callable_wrapper<decltype(std::bind(std::forward<Args>(args)...))>;
 
-    template<class Method>
-    static
-    auto
-    mem_fn(Method m) -> callable_wrapper<decltype(std::mem_fn(std::forward<Method>(m)))>;
-
 private:
     static
     uint64_t
@@ -146,9 +146,11 @@ private:
     std::string
     to_hex_string(uint64_t val);
 
+    bool m_verbose;
     uint64_t trace_id;
     state_t state;
-    boost::optional<state_t> previous_state;
+    state_t previous_state;
+    bool was_pushed;
 };
 
 class trace_t::restore_scope_t
@@ -161,7 +163,6 @@ private:
     trace_t old_span;
     bool restored;
 };
-
 
 class trace_t::push_scope_t
 {
@@ -182,7 +183,7 @@ public:
 
     template<class... Args>
     auto
-    operator()(Args&&... args) -> decltype(std::declval<F>()(args...)) {
+    operator()(Args&&... args) -> decltype(std::declval<F>()(std::forward<Args>(args)...)) {
         restore_scope_t scope(stored_trace);
         return f(std::forward<Args>(args)...);
     }
@@ -197,13 +198,6 @@ auto
 trace_t::bind(Args&& ...args) -> callable_wrapper<decltype(std::bind(std::forward<Args>(args)...))> {
     typedef callable_wrapper<decltype(std::bind(std::forward<Args>(args)...))> result_type;
     return result_type(std::bind(std::forward<Args>(args)...));
-}
-
-template<class Method>
-auto
-trace_t::mem_fn(Method m) -> callable_wrapper<decltype(std::mem_fn(std::forward<Method>(m)))> {
-    typedef callable_wrapper<decltype(std::mem_fn(std::forward<Method>(m)))> result_type;
-    return result_type(std::mem_fn(std::forward<Method>(m)));
 }
 
 } // namespace cocaine

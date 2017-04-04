@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -24,6 +24,8 @@
 #include "cocaine/common.hpp"
 
 #include <array>
+#include <cstdint>
+#include <string>
 
 namespace cocaine {
 
@@ -38,8 +40,6 @@ struct unique_id_t {
 
     bool
     operator==(const unique_id_t& other) const;
-
-    // Friends
 
     friend
     std::ostream&

@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -35,10 +35,10 @@ template<hashid HashID>
 class crypto {
     COCAINE_DECLARE_NONCOPYABLE(crypto)
 
-    const std::unique_ptr<logging::log_t> m_log;
+    const std::unique_ptr<logging::logger_t> m_log;
     const std::string m_service;
 
-    typename api::category_traits<api::storage_t>::ptr_type m_store;
+    api::storage_ptr m_store;
 
 public:
     crypto(context_t& context, const std::string& service);

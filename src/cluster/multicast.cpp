@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -21,6 +21,9 @@
 #include "cocaine/detail/cluster/multicast.hpp"
 
 #include "cocaine/context.hpp"
+#include "cocaine/context/signal.hpp"
+#include "cocaine/context/quote.hpp"
+#include "cocaine/dynamic.hpp"
 #include "cocaine/logging.hpp"
 
 #include "cocaine/rpc/dispatch.hpp"
@@ -34,24 +37,28 @@
 #include <asio/io_service.hpp>
 #include <asio/ip/multicast.hpp>
 
+#include <blackhole/logger.hpp>
+
 using namespace cocaine::io;
 using namespace cocaine::cluster;
 
 using namespace asio;
 using namespace asio::ip;
 
+using blackhole::attribute_list;
+
 namespace cocaine {
 
 namespace ph = std::placeholders;
 
 template<>
-struct dynamic_converter<ip::address> {
-    typedef ip::address result_type;
+struct dynamic_converter<address> {
+    typedef address result_type;
 
     static
     result_type
     convert(const dynamic_t& source) {
-        return ip::address::from_string(source.as_string());
+        return address::from_string(source.as_string());
     }
 };
 
@@ -66,7 +73,7 @@ struct dynamic_converter<multicast_cfg_t> {
 
         try {
             result.endpoint = udp::endpoint(
-                source.as_object().at("group").to<ip::address>(),
+                source.as_object().at("group").to<address>(),
                 source.as_object().at("port", 10053u).as_uint()
             );
         } catch(std::out_of_range& e) {
@@ -92,8 +99,8 @@ multicast_t::announce_t {
     udp::endpoint endpoint;
 };
 
-multicast_t::multicast_t(context_t& context, interface& locator, const std::string& name, const dynamic_t& args):
-    category_type(context, locator, name, args),
+multicast_t::multicast_t(context_t& context, interface& locator, mode_t mode, const std::string& name, const dynamic_t& args):
+    category_type(context, locator, mode, name, args),
     m_context(context),
     m_log(context.log(name)),
     m_locator(locator),
@@ -114,7 +121,7 @@ multicast_t::multicast_t(context_t& context, interface& locator, const std::stri
         auto interface = args.as_object().at("interface");
 
         if(m_cfg.endpoint.address().is_v4()) {
-            m_socket.set_option(multicast::outbound_interface(interface.to<ip::address>().to_v4()));
+            m_socket.set_option(multicast::outbound_interface(interface.to<address>().to_v4()));
         } else {
             m_socket.set_option(multicast::outbound_interface(interface.as_uint()));
         }
@@ -123,23 +130,25 @@ multicast_t::multicast_t(context_t& context, interface& locator, const std::stri
     m_socket.set_option(multicast::enable_loopback(args.as_object().at("loopback", false).as_bool()));
     m_socket.set_option(multicast::hops(args.as_object().at("hops", 1u).as_uint()));
 
-    COCAINE_LOG_INFO(m_log, "joining multicast group '%s'", m_cfg.endpoint)(
-        "uuid", m_locator.uuid()
-    );
+    COCAINE_LOG_INFO(m_log, "joining multicast group '{}'", m_cfg.endpoint, attribute_list({
+        {"uuid", m_locator.uuid()}
+    }));
 
     m_socket.set_option(multicast::join_group(m_cfg.endpoint.address()));
 
-    const auto announce = std::make_shared<announce_t>();
+    if(mode == mode_t::full) {
+        const auto announce = std::make_shared<announce_t>();
 
-    m_socket.async_receive_from(buffer(announce->buffer.data(), announce->buffer.size()),
-        announce->endpoint,
-        std::bind(&multicast_t::on_receive, this, ph::_1, ph::_2, announce)
-    );
+        m_socket.async_receive_from(buffer(announce->buffer.data(), announce->buffer.size()),
+            announce->endpoint,
+            std::bind(&multicast_t::on_receive, this, ph::_1, ph::_2, announce)
+        );
+    }
 
     m_signals = std::make_shared<dispatch<context_tag>>(name);
-    m_signals->on<context::prepared>(std::bind(&multicast_t::on_publish, this, std::error_code()));
+    m_signals->on<io::context::prepared>(std::bind(&multicast_t::on_publish, this, std::error_code()));
 
-    context.listen(m_signals, m_locator.asio());
+    context.signal_hub().listen(m_signals, m_locator.asio());
 }
 
 multicast_t::~multicast_t() {
@@ -159,32 +168,30 @@ multicast_t::on_publish(const std::error_code& ec) {
         return;
     }
 
-    const auto quoted = m_context.locate("locator");
+    const auto quote = m_context.locate("locator");
 
-    if(!quoted) {
+    if(!quote) {
         COCAINE_LOG_ERROR(m_log, "unable to announce local endpoints: locator is not available");
         return;
     }
 
-    const auto endpoints = quoted->location;
-
-    if(!endpoints.empty()) {
-        COCAINE_LOG_DEBUG(m_log, "announcing %d local endpoint(s)", endpoints.size())(
-            "uuid", m_locator.uuid()
-        );
+    if(!quote->endpoints.empty()) {
+        COCAINE_LOG_DEBUG(m_log, "announcing {:d} local endpoint(s)", quote->endpoints.size(), attribute_list({
+            {"uuid", m_locator.uuid()}
+        }));
 
         msgpack::sbuffer target;
         msgpack::packer<msgpack::sbuffer> packer(target);
 
         type_traits<announce_t::tuple_type>::pack(packer, std::forward_as_tuple(
             m_locator.uuid(),
-            endpoints
+            std::move(quote->endpoints)
         ));
 
         try {
             m_socket.send_to(buffer(target.data(), target.size()), m_cfg.endpoint);
         } catch(const std::system_error& e) {
-            COCAINE_LOG_ERROR(m_log, "unable to announce local endpoints: %s", error::to_string(e));
+            COCAINE_LOG_ERROR(m_log, "unable to announce local endpoints: {}", error::to_string(e));
         }
     } else {
         COCAINE_LOG_ERROR(m_log, "unable to announce local endpoints: node is not reachable");
@@ -200,9 +207,8 @@ multicast_t::on_receive(const std::error_code& ec, size_t bytes_received,
 {
     if(ec) {
         if(ec != asio::error::operation_aborted) {
-            COCAINE_LOG_ERROR(m_log, "unexpected error in multicast_t::on_receive(): [%d] %s",
-                ec.value(), ec.message()
-            );
+            COCAINE_LOG_ERROR(m_log, "unexpected error in multicast_t::on_receive(): [{:d}] {}",
+                ec.value(), ec.message());
         }
 
         return;
@@ -213,7 +219,7 @@ multicast_t::on_receive(const std::error_code& ec, size_t bytes_received,
     try {
         msgpack::unpack(&unpacked, ptr->buffer.data(), bytes_received);
     } catch(const msgpack::unpack_error& e) {
-        COCAINE_LOG_ERROR(m_log, "unable to unpack announce: %s", e.what());
+        COCAINE_LOG_ERROR(m_log, "unable to unpack announce: {}", e.what());
         return;
     }
 
@@ -223,23 +229,23 @@ multicast_t::on_receive(const std::error_code& ec, size_t bytes_received,
     try {
         type_traits<announce_t::tuple_type>::unpack(unpacked.get(), std::tie(uuid, endpoints));
     } catch(const msgpack::type_error& e) {
-        COCAINE_LOG_ERROR(m_log, "unable to decode announce: %s", e.what());
+        COCAINE_LOG_ERROR(m_log, "unable to decode announce: {}", e.what());
         return;
     }
 
     if(uuid != m_locator.uuid()) {
-        COCAINE_LOG_DEBUG(m_log, "received %d endpoint(s) from %s", endpoints.size(), ptr->endpoint)(
-            "uuid", uuid
-        );
+        COCAINE_LOG_DEBUG(m_log, "received {:d} endpoint(s) from {}", endpoints.size(), ptr->endpoint, attribute_list({
+            {"uuid", uuid}
+        }));
 
         auto& expiration = m_expirations[uuid];
 
         if(!expiration) {
             expiration = std::make_unique<deadline_timer>(m_locator.asio());
-
-            // Link a new node only when seen for the first time.
-            m_locator.link_node(uuid, endpoints);
         }
+
+        // Link node always on announce - delegate decision of establishing connection to locator
+        m_locator.link_node(uuid, endpoints);
 
         expiration->expires_from_now(m_cfg.interval * 3);
         expiration->async_wait(std::bind(&multicast_t::on_expired, this, ph::_1, uuid));
@@ -259,9 +265,9 @@ multicast_t::on_expired(const std::error_code& ec, const std::string& uuid) {
         return;
     }
 
-    COCAINE_LOG_ERROR(m_log, "remote endpoints have expired")(
-        "uuid", uuid
-    );
+    COCAINE_LOG_ERROR(m_log, "remote endpoints have expired", {
+        {"uuid", uuid}
+    });
 
     m_locator.drop_node(uuid);
     m_expirations.erase(uuid);

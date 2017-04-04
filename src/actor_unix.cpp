@@ -1,36 +1,40 @@
 #include "cocaine/rpc/actor_unix.hpp"
 
-#include <boost/filesystem/operations.hpp>
-
 #include "cocaine/context.hpp"
-#include "cocaine/logging.hpp"
-
 #include "cocaine/detail/chamber.hpp"
-#include "cocaine/detail/engine.hpp"
+#include "cocaine/engine.hpp"
+#include "cocaine/errors.hpp"
+#include "cocaine/logging.hpp"
+#include "cocaine/memory.hpp"
+#include "cocaine/rpc/basic_dispatch.hpp"
+
+#include <blackhole/attribute.hpp>
+#include <blackhole/logger.hpp>
+
+#include <boost/filesystem/operations.hpp>
+#include <boost/lexical_cast.hpp>
 
 using namespace cocaine;
-
-using namespace blackhole;
 
 namespace ph = std::placeholders;
 
 class unix_actor_t::accept_action_t:
     public std::enable_shared_from_this<accept_action_t>
 {
-    unix_actor_t *const   parent;
+    unix_actor_t& parent;
     protocol_type::socket socket;
 
 public:
-    accept_action_t(unix_actor_t *const parent):
+    accept_action_t(unix_actor_t& parent):
         parent(parent),
-        socket(*parent->m_asio)
+        socket(*parent.m_asio)
     {}
 
     void
     operator()() {
-        parent->m_acceptor.apply([this](std::unique_ptr<protocol_type::acceptor>& ptr) {
+        parent.m_acceptor.apply([this](std::unique_ptr<protocol_type::acceptor>& ptr) {
             if(!ptr) {
-                COCAINE_LOG_ERROR(parent->m_log, "abnormal termination of actor connection pump");
+                COCAINE_LOG_ERROR(parent.m_log, "abnormal termination of actor connection pump");
                 return;
             }
 
@@ -48,33 +52,32 @@ private:
         auto ptr = std::make_unique<protocol_type::socket>(std::move(socket));
 
         switch(ec.value()) {
-          case 0:
-            COCAINE_LOG_DEBUG(parent->m_log, "accepted connection on fd %d", ptr->native_handle());
+        case 0:
+            COCAINE_LOG_DEBUG(parent.m_log, "accepted connection on fd {}", ptr->native_handle());
 
             try {
-                auto base = parent->fact();
-                auto session = parent->m_context.engine().attach(std::move(ptr), base);
-                parent->bind(base, std::move(session));
+                auto base = parent.fact();
+                auto session = parent.m_context.engine().attach(std::move(ptr), base);
+                parent.bind(base, std::move(session));
             } catch(const std::system_error& e) {
-                COCAINE_LOG_ERROR(parent->m_log, "unable to attach connection to engine: %s",
+                COCAINE_LOG_ERROR(parent.m_log, "unable to attach connection to engine: {}",
                     error::to_string(e));
                 ptr = nullptr;
             }
 
             break;
 
-          case asio::error::operation_aborted:
+        case asio::error::operation_aborted:
             return;
 
-          default:
-            COCAINE_LOG_ERROR(parent->m_log, "unable to accept connection: [%d] %s", ec.value(),
+        default:
+            COCAINE_LOG_ERROR(parent.m_log, "unable to accept connection: [{}] {}", ec.value(),
                 ec.message());
             break;
         }
 
-        // TODO(@kobolog): Find out if it's always a good idea to continue accepting connections no
-        // matter what. E.g., destroying a socket from outside this thread will trigger weird stuff
-        // on Linux.
+        // TODO: Find out if it's always a good idea to continue accepting connections no matter what.
+        // For example, destroying a socket from outside this thread will trigger weird stuff on Linux.
         operator()();
     }
 };
@@ -87,7 +90,7 @@ unix_actor_t::unix_actor_t(cocaine::context_t& context,
                            std::unique_ptr<cocaine::io::basic_dispatch_t> prototype) :
     m_context(context),
     endpoint(std::move(endpoint)),
-    m_log(context.log("core::io", {{ "app", prototype->name() }})),
+    m_log(context.log("core/asio", {{ "service", prototype->name() }})),
     m_asio(asio),
     m_prototype(std::move(prototype)),
     fact(std::move(fact)),
@@ -102,7 +105,7 @@ unix_actor_t::run() {
         try {
             ptr = std::make_unique<protocol_type::acceptor>(*m_asio, this->endpoint);
         } catch(const std::system_error& e) {
-            COCAINE_LOG_ERROR(m_log, "unable to bind local endpoint for service: %s",
+            COCAINE_LOG_ERROR(m_log, "unable to bind local endpoint for service: {}",
                 error::to_string(e));
             throw;
         }
@@ -110,11 +113,11 @@ unix_actor_t::run() {
         std::error_code ec;
         const auto endpoint = ptr->local_endpoint(ec);
 
-        COCAINE_LOG_INFO(m_log, "exposing service on local endpoint %s", endpoint);
+        COCAINE_LOG_INFO(m_log, "exposing service on local endpoint {}", endpoint);
     });
 
     m_asio->post(std::bind(&accept_action_t::operator(),
-        std::make_shared<accept_action_t>(this)
+        std::make_shared<accept_action_t>(*this)
     ));
 
     // The post() above won't be executed until this thread is started.
@@ -134,7 +137,7 @@ unix_actor_t::terminate() {
         std::error_code ec;
         const auto endpoint = ptr->local_endpoint(ec);
 
-        COCAINE_LOG_INFO(m_log, "removing service from local endpoint %s", endpoint);
+        COCAINE_LOG_INFO(m_log, "removing service from local endpoint {}", endpoint);
 
         ptr = nullptr;
     });
@@ -145,9 +148,9 @@ unix_actor_t::terminate() {
     const auto endpoint = boost::lexical_cast<std::string>(this->endpoint);
 
     try {
-        COCAINE_LOG_DEBUG(m_log, "removing local endpoint '%s'", endpoint);
+        COCAINE_LOG_DEBUG(m_log, "removing local endpoint '{}'", endpoint);
         boost::filesystem::remove(endpoint);
     } catch (const std::exception& err) {
-        COCAINE_LOG_WARNING(m_log, "unable to clean local endpoint '%s': %s", endpoint, err.what());
+        COCAINE_LOG_WARNING(m_log, "unable to clean local endpoint '{}': {}", endpoint, err.what());
     }
 }

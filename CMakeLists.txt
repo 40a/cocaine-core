@@ -4,7 +4,7 @@ PROJECT(COCAINE-CORE)
 
 SET(COCAINE_VERSION_MAJOR   0)
 SET(COCAINE_VERSION_MINOR   12)
-SET(COCAINE_VERSION_RELEASE 3)
+SET(COCAINE_VERSION_RELEASE 12)
 
 SET(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
@@ -12,9 +12,8 @@ IF(APPLE)
     SET(CMAKE_MACOSX_RPATH ON)
 ENDIF()
 
-OPTION(COCAINE_ALLOW_TESTS "Build Tests" OFF)
+OPTION(COCAINE_ALLOW_TESTS "Build Tests" ON)
 OPTION(COCAINE_ALLOW_BENCHMARKS "Build Benchmarking Tools" OFF)
-OPTION(COCAINE_DEBUG OFF)
 
 # Import our CMake modules.
 INCLUDE(cmake/locate_library.cmake)
@@ -55,7 +54,6 @@ INCLUDE_DIRECTORIES(SYSTEM
     ${PROJECT_SOURCE_DIR}/foreign/rapidjson/include)
 
 INCLUDE_DIRECTORIES(BEFORE
-    ${PROJECT_SOURCE_DIR}/foreign/blackhole/src
     ${PROJECT_SOURCE_DIR}/include)
 
 LINK_DIRECTORIES(
@@ -64,10 +62,23 @@ LINK_DIRECTORIES(
     ${LIBMSGPACK_LIBRARY_DIRS}
     ${LIBLTDL_LIBRARY_DIRS})
 
+ADD_LIBRARY(cocaine-io-util SHARED
+    src/encoder.cpp
+    src/errors.cpp
+    src/header.cpp
+    src/trace.cpp)
+
 ADD_LIBRARY(cocaine-core SHARED
-    src/actor.cpp
     src/actor_unix.cpp
-    src/api.cpp
+    src/actor.cpp
+    src/api/authentication.cpp
+    src/api/authorization.cpp
+    src/api/storage.cpp
+    src/api/unicorn.cpp
+    src/auth/uid.cpp
+    src/authorization/event.cpp
+    src/authorization/storage.cpp
+    src/authorization/unicorn.cpp
     src/chamber.cpp
     src/cluster/multicast.cpp
     src/cluster/predefine.cpp
@@ -75,14 +86,14 @@ ADD_LIBRARY(cocaine-core SHARED
     src/context/config.cpp
     src/context/mapper.cpp
     src/crypto.cpp
+    src/decoder.cpp
     src/defaults.cpp
     src/dispatch.cpp
     src/dynamic.cpp
     src/engine.cpp
-    src/errors.cpp
     src/essentials.cpp
+    src/executor/asio.cpp
     src/gateway/adhoc.cpp
-    src/header.cpp
     src/logging.cpp
     src/repository.cpp
     src/service/locator.cpp
@@ -90,19 +101,38 @@ ADD_LIBRARY(cocaine-core SHARED
     src/service/logging.cpp
     src/service/storage.cpp
     src/session.cpp
+    src/signal.cpp
     src/storage/files.cpp
-    src/trace.cpp
-    src/unique_id.cpp)
+    src/trace/logger.cpp
+    src/unicorn/value.cpp
+    src/unique_id.cpp
+)
+
+TARGET_LINK_LIBRARIES(cocaine-io-util
+    blackhole
+    ${Boost_LIBRARIES})
 
 TARGET_LINK_LIBRARIES(cocaine-core
+    cocaine-io-util
     ${Boost_LIBRARIES}
+    ${LIBBFD_LIBRARY}
     ltdl
     mhash
     msgpack
+    blackhole
+    metrics
     ${LIBUUID_LIBRARY})
+
+SET_TARGET_PROPERTIES(cocaine-io-util PROPERTIES
+    VERSION 3)
 
 SET_TARGET_PROPERTIES(cocaine-core PROPERTIES
     VERSION 3)
+
+IF (NOT "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+    SET_TARGET_PROPERTIES(cocaine-core PROPERTIES
+        LINK_FLAGS -Wl,--version-script=${PROJECT_SOURCE_DIR}/libcocaine-core3.version)
+ENDIF()
 
 ADD_EXECUTABLE(cocaine-runtime
     src/runtime/logging.cpp
@@ -110,9 +140,8 @@ ADD_EXECUTABLE(cocaine-runtime
     src/runtime/runtime.cpp)
 
 TARGET_LINK_LIBRARIES(cocaine-runtime
-    stdc++
-    ${LIBBFD_LIBRARY}
     ${Boost_LIBRARIES}
+    blackhole
     cocaine-core)
 
 # Try and enable C++11.
@@ -131,7 +160,7 @@ ADD_CXX_COMPILER_FLAG(-pedantic)
 ADD_CXX_COMPILER_FLAG(-pedantic-errors)
 
 IF(COCAINE_ALLOW_TESTS OR COCAINE_ALLOW_BENCHMARKS)
-    ADD_CUSTOM_TARGET(test
+    ADD_CUSTOM_TARGET(unittest
         COMMAND ${CMAKE_BINARY_DIR}/tests/cocaine-core-unit
         DEPENDS cocaine-core-unit
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
@@ -144,6 +173,7 @@ ENDIF()
 
 INSTALL(
     TARGETS
+        cocaine-io-util
         cocaine-core
         cocaine-runtime
     RUNTIME DESTINATION bin COMPONENT runtime

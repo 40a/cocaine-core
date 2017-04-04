@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -43,7 +43,7 @@ public:
 class predefine_t:
     public api::cluster_t
 {
-    const std::unique_ptr<logging::log_t> m_log;
+    const std::unique_ptr<logging::logger_t> m_log;
 
     // Interoperability with the locator service.
     interface& m_locator;
@@ -58,7 +58,7 @@ class predefine_t:
     std::shared_ptr<dispatch<io::context_tag>> m_signals;
 
 public:
-    predefine_t(context_t& context, interface& locator, const std::string& name, const dynamic_t& args);
+    predefine_t(context_t& context, interface& locator, mode_t mode, const std::string& name, const dynamic_t& args);
 
     virtual
    ~predefine_t();

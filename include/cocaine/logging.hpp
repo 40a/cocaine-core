@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -22,79 +22,77 @@
 #define COCAINE_LOGGING_HPP
 
 #include "cocaine/common.hpp"
+#include "cocaine/format.hpp"
+#include "cocaine/utility.hpp"
 
-#include "cocaine/trace/logger/blackhole.hpp"
+// TODO: Hide all blackhole includes from the public API.
+#include <blackhole/attribute.hpp>
+#include <blackhole/attributes.hpp>
+#include <blackhole/extensions/facade.hpp>
 
-#include <blackhole/blackhole.hpp>
-#include <blackhole/keyword.hpp>
-#include <blackhole/logger/wrapper.hpp>
+// TODO: Do not include this file from public API.
 
-#define COCAINE_LOG(_log_, _level_, ...) \
-    if(auto _record_ = ::cocaine::logging::detail::logger_ptr(_log_)->open_record(_level_)) \
-        ::blackhole::aux::logger::make_pusher(*(::cocaine::logging::detail::logger_ptr(_log_)), _record_, __VA_ARGS__)
+#define COCAINE_LOG(__log__, __severity__, ...) \
+    ::cocaine::detail::logging::log(__log__, __severity__, __VA_ARGS__)
 
-#define COCAINE_LOG_DEBUG(_log_, ...) \
-    COCAINE_LOG(_log_, ::cocaine::logging::debug, __VA_ARGS__)
+#define COCAINE_LOG_DEBUG(__log__, ...) \
+    COCAINE_LOG(__log__, ::cocaine::logging::debug, __VA_ARGS__)
 
-#define COCAINE_LOG_INFO(_log_, ...) \
-    COCAINE_LOG(_log_, ::cocaine::logging::info, __VA_ARGS__)
+#define COCAINE_LOG_INFO(__log__, ...) \
+    COCAINE_LOG(__log__, ::cocaine::logging::info, __VA_ARGS__)
 
-#define COCAINE_LOG_WARNING(_log_, ...) \
-    COCAINE_LOG(_log_, ::cocaine::logging::warning, __VA_ARGS__)
+#define COCAINE_LOG_WARNING(__log__, ...) \
+    COCAINE_LOG(__log__, ::cocaine::logging::warning, __VA_ARGS__)
 
-#define COCAINE_LOG_ERROR(_log_, ...) \
-    COCAINE_LOG(_log_, ::cocaine::logging::error, __VA_ARGS__)
+#define COCAINE_LOG_ERROR(__log__, ...) \
+    COCAINE_LOG(__log__, ::cocaine::logging::error, __VA_ARGS__)
 
-#define COCAINE_LOG_ZIPKIN(_log_, ...) \
-    if(!trace_t::current().empty()) COCAINE_LOG_INFO(_log_, __VA_ARGS__)
+namespace cocaine {
 
-namespace cocaine { namespace logging {
+/// Explicitly specialize for attribute list to avoid improper attribute list handling
+template<>
+struct display_traits<blackhole::attribute_list> {
+    using value_t = blackhole::attribute_list;
+    static
+    auto
+    apply(const value_t& value) -> const value_t& {
+        return value;
+    }
+};
 
-DECLARE_KEYWORD(source, std::string)
-
-namespace detail {
-
-template<class T>
-inline
-const T*
-logger_ptr(const T& log) {
-    return &log;
 }
 
-template<class T>
-inline
-const T*
-logger_ptr(const T* log) {
-    return log;
-}
+namespace cocaine { namespace detail { namespace logging {
 
-template<class T>
-inline
-const T*
-logger_ptr(const std::unique_ptr<T>& log) {
-    return log.get();
-}
+template<typename T> inline auto logger_ref(T& log) -> T& { return log; }
+template<typename T> inline auto logger_ref(T* const log) -> T& { return *log; }
+template<typename T> inline auto logger_ref(std::unique_ptr<T>& log) -> T& { return *log; }
+template<typename T> inline auto logger_ref(const std::unique_ptr<T>& log) -> T& { return *log; }
+template<typename T> inline auto logger_ref(std::shared_ptr<T>& log) -> T& { return *log; }
+template<typename T> inline auto logger_ref(const std::shared_ptr<T>& log) -> T& { return *log; }
 
-template<class T>
-inline
-const T*
-logger_ptr(const std::shared_ptr<T>& log) {
-    return log.get();
-}
-
-} // namespace detail
-
-// C++ typename demangling
-
+template<typename T>
 auto
-demangle(const std::string& mangled) -> std::string;
-
-template<class T>
-auto
-demangle() -> std::string {
-    return demangle(typeid(T).name());
+make_facade(T&& log) -> blackhole::logger_facade<cocaine::logging::logger_t> {
+    return blackhole::logger_facade<cocaine::logging::logger_t>(logger_ref(log));
 }
 
-}} // namespace cocaine::logging
+template<typename Log, typename Message>
+auto
+log(Log&& log, cocaine::logging::priorities severity, Message&& message, const blackhole::attribute_list& attributes) -> void {
+    make_facade(log).log(severity, std::forward<Message>(message), attributes);
+}
+
+template<typename Log, typename Message, typename... Args>
+auto
+log(Log&& log, cocaine::logging::priorities severity, Message&& message, const Args&... args) -> void {
+    make_facade(log).log(
+        severity,
+        std::forward<Message>(message),
+        display_traits<typename pristine<Args>::type>::apply(args)...
+    );
+}
+
+}}}  // namespace cocaine::detail::logging
 
 #endif

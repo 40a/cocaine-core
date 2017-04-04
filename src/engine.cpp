@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -18,7 +18,7 @@
     along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "cocaine/detail/engine.hpp"
+#include "cocaine/engine.hpp"
 
 #include "cocaine/context.hpp"
 #include "cocaine/logging.hpp"
@@ -26,9 +26,13 @@
 #include "cocaine/detail/chamber.hpp"
 
 #include "cocaine/rpc/asio/transport.hpp"
+#include "cocaine/rpc/basic_dispatch.hpp"
 #include "cocaine/rpc/session.hpp"
 
-#include <blackhole/scoped_attributes.hpp>
+#include <blackhole/logger.hpp>
+#include <blackhole/wrapper.hpp>
+
+#include <boost/lexical_cast.hpp>
 
 #include <asio/io_service.hpp>
 #include <asio/ip/tcp.hpp>
@@ -38,8 +42,6 @@ using namespace cocaine;
 using namespace cocaine::io;
 
 using namespace asio;
-
-using namespace blackhole;
 
 class execution_unit_t::gc_action_t:
     public std::enable_shared_from_this<gc_action_t>
@@ -88,7 +90,6 @@ execution_unit_t::gc_action_t::finalize(const std::error_code& ec) {
         if(!it->second->memory_pressure()) {
             recycled++;
             it = parent->m_sessions.erase(it);
-
             continue;
         }
 
@@ -96,7 +97,7 @@ execution_unit_t::gc_action_t::finalize(const std::error_code& ec) {
     }
 
     if(recycled) {
-        COCAINE_LOG_DEBUG(parent->m_log, "recycled %d session(s)", recycled);
+        COCAINE_LOG_DEBUG(parent->m_log, "recycled {:d} session(s)", recycled);
     }
 
     operator()();
@@ -104,10 +105,9 @@ execution_unit_t::gc_action_t::finalize(const std::error_code& ec) {
 
 execution_unit_t::execution_unit_t(context_t& context):
     m_asio(new io_service()),
-    m_chamber(new chamber_t("core:asio", m_asio)),
-    m_log(context.log("core:asio", {
-        attribute::make("engine", m_chamber->thread_id())
-    })),
+    m_chamber(new chamber_t("core/asio", m_asio)),
+    m_log(context.log("core/asio", {{"engine", m_chamber->thread_id()}})),
+    m_metrics(context.metrics_hub()),
     m_cron(new asio::deadline_timer(*m_asio))
 {
     m_asio->post(std::bind(&gc_action_t::operator(),
@@ -165,6 +165,13 @@ execution_unit_t::attach(std::unique_ptr<Socket> ptr, const dispatch_ptr_t& disp
             // Disable Nagle's algorithm, since most of the service clients do not send or receive
             // more than a couple of kilobytes of data.
             transport->socket->set_option(ip::tcp::no_delay(true));
+
+            // Enabling keepalive for TCP socket is required to avoid weird IPVS behavior on erasing
+            // a table record, which lead to infinite socket consuming and making us suffer from fd
+            // leakage.
+            // NOTE: There is another solution: with reading `null_buffers` every N seconds we can
+            // check an error code received.
+            transport->socket->set_option(asio::socket_base::keep_alive(true));
             remote_endpoint = boost::lexical_cast<std::string>(ptr->remote_endpoint());
         } else if(std::is_same<protocol_type, local::stream_protocol>::value) {
             remote_endpoint = boost::lexical_cast<std::string>(endpoint);
@@ -172,20 +179,24 @@ execution_unit_t::attach(std::unique_ptr<Socket> ptr, const dispatch_ptr_t& disp
             remote_endpoint = "<unknown>";
         }
 
-        std::unique_ptr<logging::log_t> log(new logging::log_t(*m_log, {
-            { "endpoint", remote_endpoint },
-            { "service",  dispatch ? dispatch->name() : "<none>" }
+        std::unique_ptr<logging::logger_t> log(new blackhole::wrapper_t(*m_log, {
+            {"endpoint", remote_endpoint                       },
+            {"service",  dispatch ? dispatch->name() : "<none>"}
         }));
 
-        COCAINE_LOG_DEBUG(log, "attached connection to engine, load: %.2f%%", utilization() * 100);
+        COCAINE_LOG_DEBUG(log, "attached connection to engine, load: {:.2f}%", utilization() * 100);
 
         // Create a new inactive session.
-        session_ = std::make_shared<session_type>(std::move(log), std::move(transport), dispatch);
+        session_ = std::make_shared<session_type>(std::move(log), m_metrics, std::move(transport), dispatch);
+        // Start pulling right now to prevent race when session is detached before pull
+        session_->pull();
     } catch(const std::system_error& e) {
         throw std::system_error(e.code(), "client has disappeared while creating session");
     }
 
-    m_asio->dispatch([=]() mutable { (m_sessions[fd] = std::move(session_))->pull(); });
+    m_asio->dispatch([=]() mutable {
+        m_sessions[fd] = std::move(session_);
+    });
 
     return session_;
 }

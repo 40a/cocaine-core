@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2013-2015 Andrey Goryachev <andrey.goryachev@gmail.com>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2013-2014 Andrey Goryachev <andrey.goryachev@gmail.com>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -70,7 +70,11 @@ public:
         return *this;
     }
 
-    using base_type::at;
+    cocaine::dynamic_t&
+    at(const std::string& key);
+
+    const cocaine::dynamic_t&
+    at(const std::string& key) const;
 
     cocaine::dynamic_t&
     at(const std::string& key, cocaine::dynamic_t& def);

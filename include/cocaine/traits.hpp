@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -30,14 +30,14 @@ struct type_traits {
     template<class Stream>
     static inline
     void
-    pack(msgpack::packer<Stream>& target, const T& source) {
-        target << source;
+    pack(msgpack::packer<Stream>& packer, const T& source) {
+        packer << source;
     }
 
     static inline
     void
-    unpack(const msgpack::object& source, T& target) {
-        source >> target;
+    unpack(const msgpack::object& unpacked, T& target) {
+        unpacked >> target;
     }
 };
 

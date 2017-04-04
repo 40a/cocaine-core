@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2013-2015 Andrey Goryachev <andrey.goryachev@gmail.com>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2013-2014 Andrey Goryachev <andrey.goryachev@gmail.com>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -96,17 +96,18 @@ struct dynamic_converter<
 >
 {
     typedef To result_type;
+    typedef typename std::underlying_type<To>::type underlying_type;
 
     static inline
     result_type
     convert(const dynamic_t& from) {
-        return static_cast<result_type>(from.as_int());
+        return static_cast<result_type>(dynamic_converter<underlying_type>::convert(from));
     }
 
     static inline
     bool
     convertible(const dynamic_t& from) {
-        return from.is_int();
+        return dynamic_converter<underlying_type>::convertible(from);
     }
 };
 
@@ -370,9 +371,9 @@ struct dynamic_converter<std::map<std::string, T>> {
             if(!it->second.convertible_to<T>()) {
                 return false;
             }
-
-            return true;
         }
+
+        return true;
     }
 };
 
@@ -406,9 +407,9 @@ struct dynamic_converter<std::unordered_map<std::string, T>> {
             if(!it->second.convertible_to<T>()) {
                 return false;
             }
-
-            return true;
         }
+
+        return true;
     }
 };
 

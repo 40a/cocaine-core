@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -20,133 +20,29 @@
 
 #include "cocaine/detail/runtime/logging.hpp"
 
-#include "cocaine/context/config.hpp"
+#include "cocaine/common.hpp"
 
-#include "cocaine/tuple.hpp"
+#include <blackhole/record.hpp>
+#include <blackhole/sink.hpp>
+#include <blackhole/sink/console.hpp>
+#include <blackhole/termcolor.hpp>
 
-#include <blackhole/formatter/json.hpp>
-#include <blackhole/frontend/files.hpp>
-#include <blackhole/frontend/syslog.hpp>
-#include <blackhole/scoped_attributes.hpp>
-#include <blackhole/sink/socket.hpp>
+namespace blackhole {
 
-BLACKHOLE_BEG_NS
-
-namespace sink {
-
-// Mapping trait that is called by Blackhole each time when syslog mapping is required.
-
-template<>
-struct priority_traits<cocaine::logging::priorities> {
-    static
-    priority_t
-    map(cocaine::logging::priorities level) {
-        switch (level) {
-        case cocaine::logging::debug:
-            return priority_t::debug;
-        case cocaine::logging::info:
-            return priority_t::info;
-        case cocaine::logging::warning:
-            return priority_t::warning;
-        case cocaine::logging::error:
-            return priority_t::err;
-        default:
-            return priority_t::debug;
-        }
-    }
-};
-
-} // namespace sink
-
-BLACKHOLE_END_NS
-
-// Severity attribute converter from enumeration underlying type into string
-
-namespace cocaine { namespace logging {
-
-void
-map_severity(blackhole::aux::attachable_ostringstream& stream, const logging::priorities& level) {
-    static const std::array<const char*, 4> describe = {{ "D", "I", "W", "E" }};
-
-    const size_t value = static_cast<size_t>(level);
-
-    if(value < describe.size()) {
-        stream << describe[value];
-    } else {
-        stream << value;
-    }
+auto
+factory<cocaine::logging::console_t>::type() const noexcept -> const char* {
+    return "console";
 }
 
-}} // namespace cocaine::logging
-
-using namespace cocaine;
-using namespace cocaine::logging;
-
-init_t::init_t(const std::map<std::string, config_t::logging_t::logger_t>& config):
-    config_(config)
-{
-    auto& repository = blackhole::repository_t::instance();
-
-    // Available logging sinks.
-    typedef boost::mpl::vector<
-        blackhole::sink::stream_t,
-        blackhole::sink::files_t<
-            blackhole::sink::files::boost_backend_t,
-            blackhole::sink::rotator_t<
-                blackhole::sink::files::boost_backend_t,
-                blackhole::sink::rotation::watcher::move_t
-            >
-        >,
-        blackhole::sink::files_t<>,
-        blackhole::sink::syslog_t<logging::priorities>,
-        blackhole::sink::socket_t<boost::asio::ip::tcp>,
-        blackhole::sink::socket_t<boost::asio::ip::udp>
-    > sinks_t;
-
-    // Available logging formatters.
-    typedef boost::mpl::vector<
-        blackhole::formatter::string_t,
-        blackhole::formatter::json_t
-    > formatters_t;
-
-    // Register frontends with all combinations of formatters and sinks with the logging repository.
-    repository.registrate<sinks_t, formatters_t>();
-
-    using blackhole::keyword::tag::severity_t;
-    using blackhole::keyword::tag::timestamp_t;
-
-    // For each logging config define mappers. Then add them into the repository.
-
-    for(auto it = config.begin(); it != config.end(); ++it) {
-        // Configure some mappings for timestamps and severity attributes.
-        blackhole::mapping::value_t mapper;
-
-        mapper.add<severity_t<logging::priorities>>(&logging::map_severity);
-        mapper.add<timestamp_t>(it->second.timestamp);
-
-        // Attach them to the logging config.
-        auto  config    = it->second.config;
-        auto& frontends = config.frontends;
-
-        for(auto it = frontends.begin(); it != frontends.end(); ++it) {
-            it->formatter.mapper = mapper;
-        }
-
-        // Register logger configuration with the Blackhole's repository.
-        repository.add_config(config);
-    }
+auto
+factory<cocaine::logging::console_t>::from(const config::node_t&) const -> std::unique_ptr<sink_t> {
+    return blackhole::builder<blackhole::sink::console_t>()
+        .colorize(cocaine::logging::debug, termcolor_t())
+        .colorize(cocaine::logging::info, termcolor_t::blue())
+        .colorize(cocaine::logging::warning, termcolor_t::yellow())
+        .colorize(cocaine::logging::error, termcolor_t::red())
+        .stdout()
+        .build();
 }
 
-std::unique_ptr<logger_t>
-init_t::logger(const std::string& backend) const {
-    auto& repository = blackhole::repository_t::instance();
-
-    return std::make_unique<logger_t>(
-        repository.create<logger_t>(backend, config(backend).verbosity)
-    );
-}
-
-config_t::logging_t::logger_t
-init_t::config(const std::string& backend) const {
-    return config_.at(backend);
-}
+}  // namespace blackhole

@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -20,29 +20,29 @@
 
 #include "cocaine/repository.hpp"
 
-#include <blackhole/scoped_attributes.hpp>
+#include "cocaine/logging.hpp"
+
+#include "cocaine/detail/logging.hpp"
+
+#include <blackhole/logger.hpp>
+#include <blackhole/scope/holder.hpp>
 
 #include <boost/filesystem/convenience.hpp>
 #include <boost/filesystem/path.hpp>
 
 #include <boost/iterator/filter_iterator.hpp>
 
-using namespace cocaine;
-using namespace cocaine::api;
+#include <dlfcn.h>
 
 namespace bh = blackhole;
 namespace fs = boost::filesystem;
 
+namespace cocaine {
+namespace api {
+
+using blackhole::scope::holder_t;
+
 namespace {
-
-typedef std::remove_pointer<lt_dlhandle>::type handle_type;
-
-struct lt_dlclose_action_t {
-    void
-    operator()(handle_type* plugin) const {
-        lt_dlclose(plugin);
-    }
-};
 
 struct is_cocaine_plugin_t {
     template<typename T>
@@ -64,42 +64,37 @@ typedef void (*initialize_fn_t)(repository_t&);
 
 } // namespace
 
-repository_t::repository_t(std::unique_ptr<logging::log_t> log):
+void
+repository_t::dlclose_action_t::operator()(void* plugin) const {
+    dlclose(plugin);
+}
+
+repository_t::repository_t(std::unique_ptr<logging::logger_t> log):
     m_log(std::move(log))
-{
-    if(lt_dlinit() != 0) throw std::system_error(error::ltdl_error);
-}
-
-repository_t::~repository_t() {
-    // Destroy all the factories.
-    m_categories.clear();
-
-    // Dispose of the plugins.
-    std::for_each(m_plugins.begin(), m_plugins.end(), lt_dlclose_action_t());
-
-    // Terminate the dynamic loader.
-    lt_dlexit();
-}
+{ }
 
 void
-repository_t::load(const std::string& path) {
-    const auto status = fs::status(path);
-
-    if(!fs::exists(status) || !fs::is_directory(status)) {
-        COCAINE_LOG_ERROR(m_log, "unable to load plugins: path '%s' is not valid", path);
-        return;
-    }
-
-    boost::filter_iterator<is_cocaine_plugin_t, fs::directory_iterator>
-        begin((is_cocaine_plugin_t()), fs::directory_iterator(path)),
-        end;
-
+repository_t::load(const std::vector<std::string>& plugin_dirs) {
+    COCAINE_LOG_INFO(m_log, "loading plugins");
     std::vector<std::string> paths;
-    std::back_insert_iterator<std::vector<std::string>> builder(paths);
+    for (const auto& dir : plugin_dirs) {
+        const auto status = fs::status(dir);
 
-    std::transform(begin, end, builder, [](const fs::directory_entry& entry) -> std::string {
-        return entry.path().string();
-    });
+        if(!fs::exists(status) || !fs::is_directory(status)) {
+            COCAINE_LOG_WARNING(m_log, "loading plugins: path '{}' is not valid", dir);
+            continue;
+        }
+        COCAINE_LOG_INFO(m_log, "loading plugins from {}", dir);
+
+        typedef boost::filter_iterator<is_cocaine_plugin_t, fs::directory_iterator> dir_iterator_t;
+
+        dir_iterator_t begin((is_cocaine_plugin_t()), fs::directory_iterator(dir));
+        dir_iterator_t end;
+
+        std::for_each(begin, end, [&](const fs::directory_entry& entry){
+            paths.push_back(entry.path().string());
+        });
+    }
 
     // Make sure that we always load plugins in the same order, to keep their error categories in a
     // proper order as well, if they add any to the error registrar.
@@ -108,27 +103,17 @@ repository_t::load(const std::string& path) {
     std::for_each(paths.begin(), paths.end(), [this](const std::string& plugin) {
         open(plugin);
     });
+    COCAINE_LOG_INFO(m_log, "successefully loaded {} plugins", paths.size());
 }
 
 void
 repository_t::open(const std::string& target) {
-    bh::scoped_attributes_t attributes(*m_log, { bh::attribute::make("plugin", target)});
+    COCAINE_LOG_INFO(m_log, "loading \"{}\" plugin", target);
 
-    COCAINE_LOG_INFO(m_log, "loading plugin");
-
-    lt_dladvise advice;
-    lt_dladvise_init(&advice);
-    lt_dladvise_global(&advice);
-
-    std::unique_ptr<handle_type, lt_dlclose_action_t> plugin(
-        lt_dlopenadvise(target.c_str(), advice),
-        lt_dlclose_action_t()
-    );
-
-    lt_dladvise_destroy(&advice);
-
+    const holder_t scoped(*m_log, {{"plugin", target}});
+    std::unique_ptr<void, dlclose_action_t> plugin(dlopen(target.c_str(), RTLD_GLOBAL|RTLD_NOW), dlclose_action_t());
     if(!plugin) {
-        throw std::system_error(error::ltdl_error, lt_dlerror());
+        throw std::system_error(error::dlopen_error, dlerror());
     }
 
     // According to the standard, it is neither defined nor undefined to access
@@ -138,8 +123,8 @@ repository_t::open(const std::string& target) {
     union { void* ptr; validation_fn_t call; } validation;
     union { void* ptr; initialize_fn_t call; } initialize;
 
-    validation.ptr = lt_dlsym(plugin.get(), "validation");
-    initialize.ptr = lt_dlsym(plugin.get(), "initialize");
+    validation.ptr = dlsym(plugin.get(), "validation");
+    initialize.ptr = dlsym(plugin.get(), "initialize");
 
     if(validation.ptr) {
         const auto preconditions = validation.call();
@@ -153,15 +138,34 @@ repository_t::open(const std::string& target) {
         try {
             initialize.call(*this);
         } catch(const std::system_error& e) {
-            COCAINE_LOG_ERROR(m_log, "unable to initialize plugin: %s", error::to_string(e));
+            COCAINE_LOG_ERROR(m_log, "unable to initialize plugin: {}", error::to_string(e));
             throw std::system_error(error::initialization_error);
         } catch(const std::exception& e) {
-            COCAINE_LOG_ERROR(m_log, "unable to initialize plugin: %s", e.what());
+            COCAINE_LOG_ERROR(m_log, "unable to initialize plugin: {}", e.what());
             throw std::system_error(error::initialization_error);
         }
     } else {
         throw std::system_error(error::invalid_interface);
     }
 
-    m_plugins.emplace_back(plugin.release());
+    m_plugins.emplace_back(std::move(plugin));
 }
+
+void
+repository_t::insert(const std::string& id, const std::string& name,
+    std::unique_ptr<factory_concept_t> factory)
+{
+    if(m_categories.count(id) && m_categories.at(id).count(name)) {
+        throw std::system_error(error::duplicate_component);
+    }
+
+    COCAINE_LOG_DEBUG(m_log, "registering component '{}' in category '{}'",
+        name,
+        detail::logging::demangle(id)
+    );
+
+    m_categories[id][name] = std::move(factory);
+}
+
+} // namespace api
+} // namespace cocaine

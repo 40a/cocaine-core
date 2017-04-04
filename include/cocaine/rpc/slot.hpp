@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -27,6 +27,7 @@
 
 #include <boost/mpl/lambda.hpp>
 #include <boost/mpl/transform.hpp>
+#include <boost/optional/optional_fwd.hpp>
 
 namespace cocaine { namespace io {
 
@@ -38,26 +39,20 @@ class basic_slot {
     typedef event_traits<event_type> traits_type;
 
 public:
-    typedef typename mpl::transform<
-        typename traits_type::argument_type,
-        typename mpl::lambda<
-            io::details::unwrap_type<mpl::_1>
-        >::type
-    >::type sequence_type;
-
     // Expected dispatch, parameter and upstream types.
+    typedef std::vector<hpack::header_t> meta_type;
+    typedef typename traits_type::tuple_type tuple_type;
+    typedef typename traits_type::sequence_type sequence_type;
     typedef dispatch<typename traits_type::dispatch_type> dispatch_type;
-    typedef typename tuple::fold<sequence_type>::type     tuple_type;
     typedef upstream<typename traits_type::upstream_type> upstream_type;
+    typedef boost::optional<std::shared_ptr<dispatch_type>> result_type;
 
     virtual
-   ~basic_slot() {
-       // Empty.
-    }
+   ~basic_slot() = default;
 
     virtual
-    boost::optional<std::shared_ptr<const dispatch_type>>
-    operator()(tuple_type&& args, upstream_type&& upstream) = 0;
+    boost::optional<std::shared_ptr<dispatch_type>>
+    operator()(const meta_type& meta, tuple_type&& args, upstream_type&& upstream) = 0;
 };
 
 template<class Event>

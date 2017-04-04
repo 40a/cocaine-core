@@ -1,6 +1,6 @@
 /*
     Copyright (c) 2014+ Evgeny Safronov <division494@gmail.com>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -18,24 +18,69 @@
     along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef COCAINE_LOG_PROPERTY_SERIALIZATION_TRAITS_HPP
-#define COCAINE_LOG_PROPERTY_SERIALIZATION_TRAITS_HPP
+#ifndef COCAINE_LOG_ATTRIBUTE_SERIALIZATION_TRAITS_HPP
+#define COCAINE_LOG_ATTRIBUTE_SERIALIZATION_TRAITS_HPP
 
 #include "cocaine/traits.hpp"
 
 #include <blackhole/attribute.hpp>
-#include <blackhole/formatter/msgpack.hpp>
+#include <blackhole/extensions/writer.hpp>
+
+// NOTE: You should manually include the <blackhole/attribute.hpp> header file BEFORE this include.
+// Such restrictment is required to avoid exporting Blackhole API.
 
 namespace cocaine { namespace io {
 
 template<>
 struct type_traits<blackhole::attribute::value_t> {
+
+    template<class Stream>
+    class visitor : public blackhole::attribute::value_t::visitor_t {
+        typedef blackhole::attribute::value_t value_t;
+
+        Stream& stream;
+
+    public:
+        visitor(Stream& stream) : stream(stream) {}
+
+        virtual auto operator()(const value_t::null_type&) -> void {
+            stream.pack_nil();
+        }
+
+        virtual auto operator()(const value_t::bool_type& value) -> void {
+            stream << value;
+        }
+
+        virtual auto operator()(const value_t::sint64_type& value) -> void {
+            stream << value;
+        }
+
+        virtual auto operator()(const value_t::uint64_type& value) -> void {
+            stream << value;
+        }
+
+        virtual auto operator()(const value_t::double_type& value) -> void {
+            stream << value;
+        }
+
+        virtual auto operator()(const value_t::string_type& value) -> void {
+            stream << value;
+        }
+
+        virtual auto operator()(const value_t::function_type& value) -> void {
+            blackhole::writer_t wr;
+            value(wr);
+            stream.pack_raw(wr.inner.size());
+            stream.pack_raw_body(wr.inner.data(), wr.inner.size());
+        }
+    };
+
     template<class Stream>
     static inline
     void
     pack(msgpack::packer<Stream>& target, const blackhole::attribute::value_t& source) {
-        blackhole::formatter::msgpack_visitor<Stream> visitor(&target);
-        boost::apply_visitor(visitor, source);
+        visitor<msgpack::packer<Stream>> visitor(target);
+        source.apply(visitor);
     }
 
     static inline
@@ -65,22 +110,6 @@ struct type_traits<blackhole::attribute::value_t> {
           default:
             throw msgpack::type_error();
         }
-    }
-};
-
-template<>
-struct type_traits<blackhole::attribute_t> {
-    template<class Stream>
-    static inline
-    void
-    pack(msgpack::packer<Stream>& target, const blackhole::attribute_t& source) {
-        type_traits<blackhole::attribute::value_t>::pack(target, source.value);
-    }
-
-    static inline
-    void
-    unpack(const msgpack::object& source, blackhole::attribute_t& target) {
-        type_traits<blackhole::attribute::value_t>::unpack(source, target.value);
     }
 };
 

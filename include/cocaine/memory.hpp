@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -39,6 +39,10 @@ namespace cocaine { namespace io {
 
 template<class T>
 struct uninitialized: public std::allocator<T> {
+    template<class U> struct rebind {
+        typedef uninitialized<U> other;
+    };
+
     void construct(T*) { }
     void destroy  (T*) { }
 };

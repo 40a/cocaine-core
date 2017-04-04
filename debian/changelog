@@ -1,3 +1,702 @@
+cocaine-core (0.12.13.0-alpha2) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Changed: unify ACL prefixes. Now for events `/.acls` is used instead
+    of `/acl`.
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 03 Apr 2017 10:30:26 +0300
+
+cocaine-core (0.12.13.0-alpha1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Feature: protocol extension (#152).
+    This change applies protocol extension frames similar to HTTP/2.
+    Implemented as a protocol extension frames, that allows sessions to
+    adjust their settings externally, revoke channels etc.
+    - Added new protocol - control.
+    - For all prime protocols new events are pushed back with event id
+    descending from 2**16-1. Such agreement guarantees that no one will be
+    broken during applying new scheme.
+    - The previous requirement forces us to use MPL map instead of type
+    lists for managing protocol event numbers.
+    - Transition states, such as `primitive<T>` or `streaming<T>` are now
+    required to be marked with `transition_type` to be properly handled by
+    cocaine’s machinery.
+    - New events are intentionally allowed for an end user to be called.
+    - Implemented channel revocation.
+  * Feature: feat: verbose logging using trace bit (#150).
+    A new HPACK header is now analyzed: a `trace_bit` of a boolean type.
+    Putting such header triggers verbose mode, when all logs are written
+    with no severity check. This mimics the previous logic, when the same
+    behavior was achieved just by presence of a `trace_id` header.
+  * Feature: add `dynamic_t` constructors from maps with non-string, but
+    still convertible-to-string, keys.
+  * Feature: extend format functionality with traits.
+    Now `cocaine::format` can use newly introduced `display_traits`
+    specializations of  for fine-grained formatting.
+  * Feature: allow the `context_t` to insert with initializers (#162).
+    This is useful to atomically check-and-insert new services, especially
+    for Node service.
+  * Changed: storage authorization now uses identities instead of just UIDs.
+  * Changed: event authorization now uses identities too (#157).
+  * Changed: deferred and streamed wrappers no longer throw exceptions
+    and return with error code instead (#151).
+  * Changed: upstreams are now able to demolish session in emergency
+    case (#156).
+  * Changed: no longer `const` hell in dispatches, because they are mutable in
+    common case.
+  * Fixed: storage with authorization is async again (#154).
+    Storage authorization check internally uses storage backend for
+    fetching/saving ACLs and it was implemented using synchronous storage
+    methods, which may freeze current execution’s thread. This change
+    returns back asynchronous behavior.
+  * Fixed: tag ACL collection for storages (#163).
+    This allows to perform migrations in the future in the case of changed
+    format.
+
+ -- Evgeny Safronov <division494@gmail.com>  Fri, 24 Mar 2017 14:39:57 +0300
+
+cocaine-core (0.12.12.3) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Feature: anonymous access for storage authorization.
+
+ -- Evgeny Safronov <division494@gmail.com>  Tue, 07 Mar 2017 14:47:51 +0300
+
+cocaine-core (0.12.12.2) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Feature: allow comments and commas in config (#147).
+  * Feature: add `dynamic_t` construction from reference wrapper.
+  * Changed: upgrade rapidjson, simplify parsing, and allow comments.
+  * Changed: hide rapidjson symbols in version script.
+
+ -- Evgeny Safronov <division494@gmail.com>  Sun, 05 Mar 2017 19:24:17 +0300
+
+cocaine-core (0.12.12.1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Changed: understandable exceptions in component instantiation (#146).
+
+ -- Evgeny Safronov <division494@gmail.com>  Fri, 03 Mar 2017 14:29:48 +0300
+
+cocaine-core (0.12.11.3) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Added: preparation for Unicorn authorization.
+  * Changed: renamed "authorizations" component to "authentications".
+  * Changed: renamed "controllers" component to "authorizations".
+  * Changed: renamed "collection" authorization to "storage".
+  * Changed: UID container is now encapsulated.
+  * Fixed: proper dynamic conversions for maps and enums.
+
+ -- Evgeny Safronov <division494@gmail.com>  Wed, 01 Mar 2017 18:44:47 +0300
+
+cocaine-core (0.12.11.2) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fixed: catch exceptions while attaching Locator node.
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 20 Feb 2017 15:18:12 +0300
+
+cocaine-core (0.12.11.1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Added: access-controlled collections for storage service (#137).
+  * Added: audit logs for storage service.
+  * Changed: better error handling for `dynamic_t` with printing missing
+    keys (#138).
+  * Removed: drop `runtime` service, because its functionality was moved to
+    the `metrics` service.
+
+ -- Evgeny Safronov <division494@gmail.com>  Wed, 15 Feb 2017 15:31:19 +0300
+
+cocaine-core (0.12.11.0-beta1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Stability marker.
+
+ -- Evgeny Safronov <division494@gmail.com>  Thu, 02 Feb 2017 14:33:10 +0300
+
+cocaine-core (0.12.11.0-alpha7) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Added: move-only callback support for executor.
+
+ -- Evgeny Safronov <antmat@me.com>  Wed, 18 Jan 2017 16:28:11 +0300
+
+cocaine-core (0.12.11.0-alpha6) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fixed: drop unnecessary public include in actor.
+  * Fixed: proper dev package dependencies.
+
+ -- Evgeny Safronov <division494@gmail.com>  Fri, 13 Jan 2017 16:54:11 +0300
+
+cocaine-core (0.12.11.0-alpha5) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fixed: resolve remapped name instead of initial one.
+    This change fixes a bug, where the locator resolved initial service
+    name instead of remapped one, which led to incorrect resolving for
+    remote routing groups.
+
+ -- Evgeny Safronov <division494@gmail.com>  Wed, 11 Jan 2017 15:32:57 +0300
+
+cocaine-core (0.12.11.0-alpha4) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Added: migrate authorization code from plugins: API, repository and
+    common middleware.
+
+ -- Evgeny Safronov <division494@gmail.com>  Fri, 30 Dec 2016 12:12:30 +0300
+
+cocaine-core (0.12.11.0-alpha3) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fixed: bump version in CMake file.
+  * Fixed: actors should no longer eat a mapped port if it failed to run.
+
+ -- Evgeny Safronov <division494@gmail.com>  Wed, 28 Dec 2016 15:33:46 +0300
+
+cocaine-core (0.12.11.0-alpha2) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fixed: Restored ABI in encoder.
+
+ -- Anton Matveenko <antmat@me.com>  Fri, 23 Dec 2016 21:01:14 +0300
+
+cocaine-core (0.12.11.0-alpha1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Added: introduce dispatch middlewares (#114).
+  * Changed: more proper `result_of` implementation (#116).
+  * Changed: safe locate method for context (#113).
+  * Changed: allow to pass encoded messages directly to upstreams (#118).
+  * Changed: make header packing public (#119).
+  * Changed: move some resolve logic inside gateways (#128).
+
+ -- Evgeny Safronov <division494@gmail.com>  Thu, 22 Dec 2016 00:30:14 +0300
+
+cocaine-core (0.12.10.7) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Bug fix: trace wrapper should now correctly forward all the things.
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 05 Dec 2016 21:05:05 +0300
+
+cocaine-core (0.12.10.6) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * API: make trace wrapper part of public API (#125).
+
+ -- Evgeny Safronov <division494@gmail.com>  Fri, 02 Dec 2016 17:33:02 +0300
+
+cocaine-core (0.12.10.5) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Added: additionally dump gauges in metrics service.
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 28 Nov 2016 16:12:53 +0300
+
+cocaine-core (0.12.10.4) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Feature: custom component support (#111).
+  * Bug fix: follow the HPACK RFC the way other pals do (#109).
+
+ -- Evgeny Safronov <division494@gmail.com>  Thu, 27 Oct 2016 13:44:04 +0300
+
+cocaine-core (0.12.10.3) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Bug fix: catch closed session exceptions (#108).
+
+ -- Evgeny Safronov <division494@gmail.com>  Wed, 19 Oct 2016 16:50:24 +0300
+
+cocaine-core (0.12.10.2) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Bug fix: error by one in HPACK (#107).
+  * Bug fix: define proper release version.
+
+ -- Evgeny Safronov <division494@gmail.com>  Tue, 18 Oct 2016 16:50:05 +0300
+
+cocaine-core (0.12.10.1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Adapt storage interface to support asynchronous operations (#106).
+  * HPACK refactoring (#104) - now use owning headers.
+  * Drop useless and senseless terminate method from the Context.
+  * Use dlopen instead of ltdl for better error messages (#102).
+
+ -- Evgeny Safronov <division494@gmail.com>  Thu, 06 Oct 2016 15:20:07 +0300
+
+cocaine-core (0.12.9.1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Hpack: fix bug in find in header table.
+
+ -- Anton Matveenko <antmat@me.com>  Fri, 22 Jul 2016 19:22:40 +0300
+
+cocaine-core (0.12.9.0-alpha5+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Repository: allow statefull factories and external component registration.
+
+ -- Anton Matveenko <antmat@me.com>  Thu, 14 Jul 2016 21:41:40 +0300
+
+cocaine-core (0.12.9.0-alpha4+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Streamed: throw proper type of exception.
+
+ -- Anton Matveenko <antmat@me.com>  Tue, 12 Jul 2016 12:07:40 +0300
+
+cocaine-core (0.12.9.0-alpha3+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Logging service should no longer duplicate attribute names and some values.
+
+ -- Evgeny Safronov <division494@gmail.com>  Tue, 05 Jul 2016 14:36:40 +0300
+
+cocaine-core (0.12.9.0-alpha2+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Temporary disable assert in session.
+
+ -- Evgeny Safronov <division494@gmail.com>  Tue, 28 Jun 2016 11:58:36 +0300
+
+cocaine-core (0.12.9.0-alpha1+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fixed SIGSEGV when using client-side session API.
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 27 Jun 2016 14:57:53 +0300
+
+cocaine-core (0.12.9.0-alpha0+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Request meta information (aka headers) are passed to services via special
+    dispatch method. Without it, for example, an authorization system seems
+    quite hard to implement.
+  * All services are now collect various runtime metrics: number of connections,
+    requests, EWMA RPS, request time percentiles by method names etc.
+  * Context now provides a metrics hub, which is useful for registering your own
+    metrics.
+  * New internal service - Runtime - responsible for gathering metrics from the
+    hub and providing it to user.
+  * Adaptation with Blackhole Release Candidate. One of the main feature is
+    the asynchronous logging; the second one - is custom configurable via config
+    filters, which makes logging routing easy.
+  * Message queue now correctly saves meta information structs.
+  * Add runtime checks for streamed wrappers to prevent protocol violation and
+    eliminate double channel closing or writing after error.
+  * Rename context factory function to be look like factory function.
+  * Asserts are now always enabled.
+
+ -- Evgeny Safronov <division494@gmail.com>  Thu, 23 Jun 2016 18:22:37 +0300
+
+cocaine-core (0.12.8.14+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Compare error categories by name instead of pointers (really this time).
+
+ -- Anton Matveenko <antmat@me.com>  Wed, 18 May 2016 19:10:06 +0300
+
+cocaine-core (0.12.8.13+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Compare error categories by name instead of pointers.
+
+ -- Anton Matveenko <antmat@me.com>  Wed, 18 May 2016 15:45:06 +0300
+
+cocaine-core (0.12.8.12+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Use shared util library instead of static.
+
+ -- Anton Matveenko <antmat@me.com>  Thu, 10 May 2016 20:47:06 +0300
+
+cocaine-core (0.12.8.11+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Hpack fix - point headers in dynamic table to proper place.
+
+ -- Anton Matveenko <antmat@me.com>  Thu, 5 May 2016 19:30:06 +0300
+
+cocaine-core (0.12.8.10+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fixed improper static objects initialization in error registrar.
+
+ -- Evgeny Safronov <division494@gmail.com>  Fri, 29 Apr 2016 13:47:06 +0300
+
+cocaine-core (0.12.8.9+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Hpack fix - proper ctor for header_storage_t
+
+ -- Anton Matveenko <antmat@me.com>  Thu, 28 Apr 2016 20:11:29 +0300
+
+cocaine-core (0.12.8.8+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Hpack fix - rebind proper headers in zone
+
+ -- Anton Matveenko <antmat@me.com>  Thu, 28 Apr 2016 15:47:29 +0300
+
+cocaine-core (0.12.8.7+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Hpack fix - proper call on header_t::create
+
+ -- Anton Matveenko <antmat@me.com>  Thu, 28 Apr 2016 14:19:29 +0300
+
+cocaine-core (0.12.8.6+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Prevent race in session pull
+
+ -- Anton Matveenko <antmat@me.com>  Tue, 26 Apr 2016 13:45:29 +0300
+
+cocaine-core (0.12.8.5+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fix discovery - always link node on announce
+
+ -- Anton Matveenko <antmat@me.com>  Fri, 22 Apr 2016 13:12:29 +0300
+
+cocaine-core (0.12.8.4+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Ignore adding same category at the same index
+
+ -- Anton Matveenko <antmat@me.com>  Mon, 18 Apr 2016 14:51:29 +0300
+
+cocaine-core (0.12.8.3+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * More verbose error for duplicate category
+
+ -- Anton Matveenko <antmat@me.com>  Fri, 15 Apr 2016 12:13:29 +0300
+
+cocaine-core (0.12.8.2+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Add missing header
+
+ -- Anton Matveenko <antmat@me.com>  Thu, 14 Apr 2016 16:36:29 +0300
+
+cocaine-core (0.12.8.1+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Move encoder inside static util library to allow native framework to build
+    properly
+
+ -- Anton Matveenko <antmat@me.com>  Thu, 14 Apr 2016 15:14:29 +0300
+
+cocaine-core (0.12.8.0-alpha0+nmu1) unstable; urgency=low
+
+  * Tracing logs are now treated as DEBUG, but the filter accepts it any time
+    where current trace context is set.
+  * Fixed invalid logging formatting appeared when unable to initialize the
+    context.
+  * Use cppformat instead of boost::format
+  * Refactor cocaine for faster build
+  * Context and config are interfaces now
+
+ -- Anton Matveenko <antmat@me.com>  Wed, 13 Apr 2016 18:47:29 +0300
+
+cocaine-core (0.12.7.3+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Add missing dependency include in forwards.
+
+ -- Evgeny Safronov <division494@gmail.com>  Tue, 15 Mar 2016 19:06:00 +0300
+
+cocaine-core (0.12.7.2+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Multiple plugin paths can now be specified in the configuration. The old
+    behavior for a single path as a string left unchanged.
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 14 Mar 2016 16:03:35 +0300
+
+cocaine-core (0.12.7.1+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Release version.
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 14 Mar 2016 11:45:29 +0300
+
+cocaine-core (0.12.7.0-alpha0+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Cocaine now provides an additional meta information (also known as headers)
+    to event handlers both in sender and receiver sides, allowing to attach that
+    information to each part of the response.
+
+ -- Evgeny Safronov <division494@gmail.com>  Wed, 09 Mar 2016 13:40:25 +0300
+
+cocaine-core (0.12.6.3+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Runtime should no longer crash after receiving HUP signal due to using of
+    already destroyed stack variable.
+
+ -- Evgeny Safronov <division494@gmail.com>  Wed, 09 Mar 2016 16:20:01 +0300
+
+cocaine-core (0.12.6.2+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Loggers should now properly reset their filters after reloading due to HUP
+    signal received.
+
+ -- Evgeny Safronov <division494@gmail.com>  Wed, 09 Mar 2016 14:24:56 +0300
+
+cocaine-core (0.12.6.1+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Release version.
+
+ -- Evgeny Safronov <division494@gmail.com>  Wed, 09 Mar 2016 13:37:38 +0300
+
+cocaine-core (0.12.6.0-alpha4+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Sighandler: rotate loggers in services
+
+ -- Anton Matveenko <antmat@me.com>  Wed, 3 Mar 2016 14:16:38 +0300
+
+cocaine-core (0.12.6.0-alpha3+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Sighandler: fix file rotation
+  * Sighandler: linux specific fixes
+
+ -- Anton Matveenko <antmat@me.com>  Wed, 2 Mar 2016 20:02:38 +0300
+
+cocaine-core (0.12.6.0-alpha2+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Sighandler: remove assertion on default action, now default action does nothing on all
+  * Sighandler: signals
+  * Sighandler: fix deadlock on multiple terminate calls
+  * Sighandler: do not throw exception during sigwaitinfo on EINTR
+  * Sighandler: use wrapper with source attribute to log in signal handler thread
+  * Sighandler: initialize sigset with zero value, do not rely on sigpending call
+  * Sighandler: more verbose logging
+  * Sighandler: reduce contention - free lock before cv.notify_one
+
+ -- Anton Matveenko <antmat@me.com>  Wed, 2 Mar 2016 10:41:38 +0300
+
+
+cocaine-core (0.12.6.0-alpha1+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Restrict Blackhole version.
+  * Bug fix: fix missing includes.
+
+ -- Evgeny Safronov <division494@gmail.com>  Fri, 26 Feb 2016 22:49:38 +0300
+
+cocaine-core (0.12.6.0-alpha0+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+
+ -- Evgeny Safronov <division494@gmail.com>  Fri, 26 Feb 2016 15:05:02 +0300
+
+cocaine-core (0.12.5.1+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Release version.
+
+ -- Evgeny Safronov <division494@gmail.com>  Sat, 20 Feb 2016 14:26:19 +0300
+
+cocaine-core (0.12.5.0-rc7+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Logging: enable TCP sink.
+
+ -- Evgeny Safronov <division494@gmail.com>  Thu, 18 Feb 2016 14:18:31 +0300
+
+cocaine-core (0.12.5.0-rc6+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Logging: allow to use logging services with non-core backends.
+
+ -- Evgeny Safronov <division494@gmail.com>  Tue, 09 Feb 2016 00:08:25 +0300
+
+cocaine-core (0.12.5.0-rc5+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Traits: fix broken logging attributes packing traits.
+
+ -- Evgeny Safronov <division494@gmail.com>  Wed, 03 Feb 2016 14:03:58 +0300
+
+cocaine-core (0.12.5.0-rc4+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Enable JSON formatter and UDP sink in logging configuration.
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 01 Feb 2016 14:11:55 +0300
+
+cocaine-core (0.12.5.0-rc3+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Logging: allow to configure file sink.
+
+ -- Evgeny Safronov <division494@gmail.com>  Tue, 26 Jan 2016 16:32:28 +0300
+
+cocaine-core (0.12.5.0-rc2+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Hide C++ ABI demangle function into details.
+  * Return back severity based logging events filtering.
+
+ -- Evgeny Safronov <division494@gmail.com>  Tue, 26 Jan 2016 12:27:39 +0300
+
+cocaine-core (0.12.5.0-rc1+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Add Unicorn category.
+  * The logging system has been completely rewritten for the sake of runtime
+    and compile-time performance.
+  * Bump configuration file version up to 4.
+
+ -- Evgeny Safronov <division494@gmail.com>  Tue, 19 Jan 2016 15:35:30 +0300
+
+cocaine-core (0.12.4.7+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * feat(engine): enable TCP keep alive option
+    Enabling keep alive for TCP socket is required to avoid weird IPVS behavior
+    on erasing a table record, which lead to infinite socket consuming and
+    making us suffer from fd leakage.
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 23 Nov 2015 14:13:50 +0300
+
+cocaine-core (0.12.4.6+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * fix(logging): fixed bug in Blackhole applied after the previous change
+
+ -- Evgeny Safronov <division494@gmail.com>  Fri, 23 Oct 2015 16:54:37 +0300
+
+cocaine-core (0.12.4.5+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * feat(logging): new Blackhole version support with configurable json
+    formatter feature, allowing to filter duplicate attributes
+  * fix(config): add missing include
+  * chore(actor): reduce symbol pollution
+
+ -- Evgeny Safronov <division494@gmail.com>  Fri, 23 Oct 2015 13:21:10 +0300
+
+cocaine-core (0.12.4.4+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * fix(zipkin): initialize was_pushed in trace ctor
+  * misc(metrics): added a submodule (but nothing more)
+
+ -- Evgeny Safronov <division494@gmail.com>  Tue, 20 Oct 2015 15:23:56 +0300
+
+cocaine-core (0.12.4.3+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * feat(synchronize): allow to use with void
+  * style(logs): consistency for logging prefixes
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 19 Oct 2015 13:34:51 +0300
+
+cocaine-core (0.12.4.2+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * misc(actor): changed prototype key name
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 19 Oct 2015 13:00:22 +0300
+
+cocaine-core (0.12.4.1+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * fix(core): C++14 aware `make_unique` function
+  * fix(cmake): mark all external libraries as system to suppress its warnings
+
+ -- Evgeny Safronov <division494@gmail.com>  Thu, 08 Oct 2015 16:32:16 +0300
+
+cocaine-core (0.12.4.0+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * api(mq): dropped an unused template parameter
+  * fix(locator): make router streams auto disposable
+
+ -- Evgeny Safronov <division494@gmail.com>  Thu, 08 Oct 2015 13:57:05 +0300
+
+cocaine-core (0.12.3.19+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * perf(locator): update routing groups without O(N^2) complexity
+  * perf(continuum): preallocate enough space for continuum dump
+
+ -- Evgeny Safronov <division494@gmail.com>  Wed, 07 Oct 2015 13:18:04 +0300
+
+cocaine-core (0.12.3.18+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fix(trace): third value can not be integer - only raw.
+  * Fix(trace): dropped limit values of zipkin traces.
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 05 Oct 2015 15:13:19 +0300
+
+cocaine-core (0.12.3.17+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Misc(actor): revert applying REUSE_ADDR option.
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 05 Oct 2015 15:09:55 +0300
+
+cocaine-core (0.12.3.16+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Misc(actor): allow to reuse TW sockets for bind for acceptor sockets.
+
+ -- Evgeny Safronov <division494@gmail.com>  Tue, 22 Sep 2015 14:12:34 +0300
+
+cocaine-core (0.12.3.15+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fix(actor): revert local endpoint obtaining logic.
+
+ -- Evgeny Safronov <division494@gmail.com>  Wed, 16 Sep 2015 19:24:41 +0300
+
+cocaine-core (0.12.3.14+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fix(locator): acquire lock during protocol cleanup to avoid race condition
+    between cleaning up aggregates and using it simultaneously.
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 14 Sep 2015 13:52:51 +0300
+
+cocaine-core (0.12.3.13+nmu1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fix(errors): now error messages should be properly formatted.
+  * Fix(predefine): fixed use of deleted temporary object if no nodes
+    specified.
+  * Fix(locator): fixed crash in the case of short-living remote clients.
+    The runtime should no longer crash if the remote node has immediately
+    disappeared after been connected.
+  * Fix(engine): fixed infinite hanging on execution unit shutdown.
+  * Misc(actor): more verbose error logging - now it's possible to see what
+    endpoint failed to be bound.
+  * Misc(session): revoked channel id is now displayed in logs.
+    This change adds more information about dropped channels by displaying
+    channel id.
+    In logs it will be: `uncaught invocation exception: [4] 42: specified
+    channel was revoked`.
+
+ -- Evgeny Safronov <division494@gmail.com>  Thu, 10 Sep 2015 18:59:42 +0300
+
 cocaine-core (0.12.3.12+nmu1) unstable; urgency=low
 
   * Non-maintainer upload.
@@ -81,7 +780,7 @@ cocaine-core (0.12.3.5) unstable; urgency=low
   * Bug fix: fixed string literals binding
   * Zipkin: fixes.
 
- -- Anton Matveenko <antmat@me.com> Mon, 10 Aug 2015 17:22:30 +0300
+ -- Anton Matveenko <antmat@me.com>  Mon, 10 Aug 2015 17:22:30 +0300
 
 cocaine-core (0.12.3.1) unstable; urgency=low
 

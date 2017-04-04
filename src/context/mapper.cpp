@@ -21,18 +21,20 @@
 #include "cocaine/context/mapper.hpp"
 
 #include "cocaine/context/config.hpp"
+#include "cocaine/errors.hpp"
 
+#include <map>
 #include <numeric>
 #include <random>
 
 using namespace cocaine;
 
 port_mapping_t::port_mapping_t(const config_t& config):
-    m_pinned(config.network.ports.pinned)
+    m_pinned(config.network().ports().pinned())
 {
     port_t minimum, maximum;
 
-    std::tie(minimum, maximum) = config.network.ports.shared;
+    std::tie(minimum, maximum) = config.network().ports().shared();
 
     std::vector<port_t> seed;
 

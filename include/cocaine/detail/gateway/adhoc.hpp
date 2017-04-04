@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -22,6 +22,7 @@
 #define COCAINE_ADHOC_GATEWAY_HPP
 
 #include "cocaine/api/gateway.hpp"
+#include "cocaine/locked_ptr.hpp"
 
 #include <random>
 
@@ -30,39 +31,50 @@ namespace cocaine { namespace gateway {
 class adhoc_t:
     public api::gateway_t
 {
-    const std::unique_ptr<logging::log_t> m_log;
+    const std::unique_ptr<logging::logger_t> m_log;
 
     // Used in resolve() method, which is const.
     std::default_random_engine mutable m_random_generator;
 
     struct remote_t {
         std::string uuid;
+        unsigned int version;
         std::vector<asio::ip::tcp::endpoint> endpoints;
+        io::graph_root_t protocol;
     };
 
-    typedef std::multimap<partition_t, remote_t> remote_map_t;
+    typedef std::map<std::string, std::map<std::string, remote_t>> remote_map_t;
 
-    // TODO(@kobolog): Make sure that remote service info is consistent across the cluster.
+    // TODO: Make sure that remote service metadata is consistent across the whole cluster.
     synchronized<remote_map_t> m_remotes;
 
 public:
-    adhoc_t(context_t& context, const std::string& name, const dynamic_t& args);
+    adhoc_t(context_t& context, const std::string& _local_uuid, const std::string& name, const dynamic_t& args);
 
-    virtual
-   ~adhoc_t();
-
-    virtual
     auto
-    resolve(const partition_t& name) const -> std::vector<asio::ip::tcp::endpoint>;
+    resolve_policy() const ->resolve_policy_t override {
+        return resolve_policy_t::remote_only;
+    }
 
-    virtual
-    size_t
+    auto
+    resolve(const std::string& name) const -> service_description_t override;
+
+    auto
     consume(const std::string& uuid,
-            const partition_t& name, const std::vector<asio::ip::tcp::endpoint>& endpoints);
+            const std::string& name,
+            unsigned int version,
+            const std::vector<asio::ip::tcp::endpoint>& endpoints,
+            const io::graph_root_t& protocol) -> void override;
 
-    virtual
-    size_t
-    cleanup(const std::string& uuid, const partition_t& name);
+    auto
+    cleanup(const std::string& uuid, const std::string& name) -> void override;
+
+    auto
+    cleanup(const std::string& uuid) -> void override;
+
+    auto
+    total_count(const std::string& name) const -> size_t override;
+
 };
 
 }} // namespace cocaine::gateway

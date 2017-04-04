@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -18,15 +18,14 @@
     along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef COCAINE_STORAGE_SERVICE_HPP
-#define COCAINE_STORAGE_SERVICE_HPP
+#pragma once
 
 #include "cocaine/api/service.hpp"
-
 #include "cocaine/idl/storage.hpp"
 #include "cocaine/rpc/dispatch.hpp"
 
-namespace cocaine { namespace service {
+namespace cocaine {
+namespace service {
 
 struct storage_t:
     public api::service_t,
@@ -36,9 +35,8 @@ struct storage_t:
 
     virtual
     auto
-    prototype() const -> const io::basic_dispatch_t&;
+    prototype() -> io::basic_dispatch_t&;
 };
 
-}} // namespace cocaine::service
-
-#endif
+}  // namespace service
+}  // namespace cocaine

@@ -1,6 +1,6 @@
 /*
-    Copyright (c) 2011-2015 Andrey Sibiryov <me@kobology.ru>
-    Copyright (c) 2011-2015 Other contributors as noted in the AUTHORS file.
+    Copyright (c) 2011-2014 Andrey Sibiryov <me@kobology.ru>
+    Copyright (c) 2011-2014 Other contributors as noted in the AUTHORS file.
 
     This file is part of Cocaine.
 
@@ -21,13 +21,12 @@
 #ifndef COCAINE_IO_SESSION_HPP
 #define COCAINE_IO_SESSION_HPP
 
-#include "cocaine/common.hpp"
-#include "cocaine/locked_ptr.hpp"
-
 #include <asio/generic/stream_protocol.hpp>
 
-#include "cocaine/rpc/asio/encoder.hpp"
+#include "cocaine/common.hpp"
+#include "cocaine/locked_ptr.hpp"
 #include "cocaine/rpc/asio/decoder.hpp"
+#include "cocaine/rpc/asio/encoder.hpp"
 
 namespace cocaine {
 
@@ -47,7 +46,10 @@ class session_t:
     typedef std::map<uint64_t, std::shared_ptr<channel_t>> channel_map_t;
 
     // Log of last resort.
-    const std::unique_ptr<logging::log_t> log;
+    const std::unique_ptr<logging::logger_t> log;
+
+    struct metrics_t;
+    std::unique_ptr<metrics_t> metrics;
 
     // The underlying connection.
 #if defined(__clang__)
@@ -58,6 +60,7 @@ class session_t:
 
     // Initial dispatch. Internally synchronized.
     const io::dispatch_ptr_t prototype;
+    io::dispatch_ptr_t service_dispatch;
 
     // Virtual channels.
     synchronized<channel_map_t> channels;
@@ -69,8 +72,12 @@ class session_t:
     uint64_t max_channel_id;
 
 public:
-    session_t(std::unique_ptr<logging::log_t> log,
-              std::unique_ptr<transport_type> transport, const io::dispatch_ptr_t& prototype);
+    session_t(std::unique_ptr<logging::logger_t> log,
+              metrics::registry_t& metrics_hub,
+              std::unique_ptr<transport_type> transport,
+              const io::dispatch_ptr_t& prototype);
+
+    ~session_t();
 
     // Observers
 
@@ -115,7 +122,10 @@ private:
     // messages to remote peers.
 
     void
-    revoke(uint64_t channel_id);
+    revoke(uint64_t id);
+
+    void
+    revoke(uint64_t id, std::error_code ec);
 };
 
 template<class Protocol>
@@ -129,8 +139,10 @@ public:
     typedef io::transport<protocol_type> transport_type;
 
 public:
-    session(std::unique_ptr<logging::log_t> log,
-            std::unique_ptr<transport_type> transport, const io::dispatch_ptr_t& prototype);
+    session(std::unique_ptr<logging::logger_t> log,
+            metrics::registry_t& metrics_hub,
+            std::unique_ptr<transport_type> transport,
+            const io::dispatch_ptr_t& prototype);
 
     auto
     remote_endpoint() const -> endpoint_type;
